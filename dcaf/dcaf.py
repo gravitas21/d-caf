@@ -12,7 +12,7 @@ Typical flow in your *user* script:
     stars = tc_core.sample_turbulent_core_cluster(...)
     petar_cfg = PetarConfig(theta=0.5, eta=0.1)
     system, comps = assemble_system(stars, petar_cfg=petar_cfg, gas_code=None)
-    run_dcaf(t_end=0.1 | units.Myr, dt=0.005 | units.Myr, system=system, stars=stars)
+    run_model(t_end=0.1 | units.Myr, dt=0.005 | units.Myr, system=system, stars=stars)
 
 Dependencies (AMUSE): units, Particles, Bridge, Petar
 """
