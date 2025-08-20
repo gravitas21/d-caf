@@ -55,7 +55,7 @@ class PetarConfig:
 @dataclass
 class BridgeConfig:
     """Bridge coupling configuration."""
-    timestep: object = 0.01 | units.Myr  
+    timestep: object = field(default_factory = lambda: 0.01 | units.Myr)
     use_threading: bool = False
 
 
