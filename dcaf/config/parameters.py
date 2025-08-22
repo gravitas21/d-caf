@@ -37,5 +37,5 @@ class GasConfig:
 
 
 def get_default_configuration():
-    return dict( petar = PetarConfig() , bridge = BridgeConfig, 
+    return dict( petar = PetarConfig() , bridge = BridgeConfig(), 
                 gas = GasConfig()  )

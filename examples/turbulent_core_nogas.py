@@ -1,6 +1,7 @@
 from amuse.lab import units
-from dcaf import StarFormationFramework
+from dcaf.dcaf import DcafSystem
 from dcaf.models import turbulentclumpmodel as tcm
+from dcaf.framework import StarFormationFramework
 
 # --- User parameters ---
 Mc = 3000 | units.MSun          # Mass of the parent cloud [Msun]
@@ -28,8 +29,11 @@ stars, params, sfe_eff = tcm.make_turbulent_core_cluster(
     seed=seed,
 )
 
+framework = StarFormationFramework(stars) #default create all stars at begining
+TCM = DcafSystem(framework)
+TCM.initialize_sytem()
 
-TCM = StarFormationFramework(stars)
+print('initialized fine')
 
-TCM.evolve_model(t_end,dt)
+TCM.evolve_model(t_end)
 
