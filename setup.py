@@ -10,6 +10,7 @@ setup(
         "numpy",
         "scipy",
         "matplotlib",
+        "pyyaml"
     ],
     python_requires=">=3.11",
 )

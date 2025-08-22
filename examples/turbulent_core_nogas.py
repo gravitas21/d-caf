@@ -9,7 +9,7 @@ sfe = 0.5                 # star formation efficiency
 surface_density = 0.1 | units.g * units.cm ** -2   # TCM Sigma
 seed = 42                 # RNG seed
 t_end = 5 | units.Myr
-dt = 0.1  | units.Myr
+dt_out = 0.1  | units.Myr
 
 # --- Build stellar ICs ---
 Mstars = sfe * Mc
@@ -32,6 +32,7 @@ stars, params, sfe_eff = tcm.make_turbulent_core_cluster(
 framework = StarFormationFramework(stars) #default create all stars at begining
 TCM = DcafSystem(framework)
 TCM.initialize_sytem()
+TCM.dt_out = dt_out
 
 print('initialized fine')
 
