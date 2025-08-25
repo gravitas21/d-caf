@@ -18,17 +18,21 @@ from dcaf.config.parameters import get_default_configuration
 
 
 class DcafSystem:
-    def __init__(self,framework, config = None, converter = None, gas_code = None ):
+    def __init__(self,framework, config = None, converter = None, gas_code =
+                 None,
+                 output_folder = './',
+                 star_factory = None):
         if config is None:
             self.config = get_default_configuration()
         else:
             self.config = config
 
+        self.star_factory = star_factory
         self.gas_code = gas_code
         self.converter = converter
         self.framework = framework
         self.dt_out = 0.5 | units.Myr #TODO: this should be on a config file
-        self.outputfolder = './' #TODO: this should be on a config file
+        self.output_folder = output_folder #TODO: this should be on a config file
         self.__current_snapshot = 0
         self.snapshot_basename = 'stars_'
 
@@ -152,13 +156,16 @@ class DcafSystem:
     def write_output(self):
         self.channel_from_code_to_memmory.copy()
 
-        filename = '%s/%s%03i'%(self.outputfolder,self.snapshot_basename,
+        filename = '%s/%s%03i'%(self.output_folder,self.snapshot_basename,
                                          self.__current_snapshot )
         print('Writing output to %s.hdf5'%filename)
         write_set_to_file(self.formed_stars,filename+'.hdf5')
         self.__current_snapshot += 1
 
     def _add_new_stars(self,stars):
+        if self.star_factory is not None:
+            stars = self.star_factory(stars,self.formed_stars)
+
         self.petar_code.particles.add_particles(stars)
         self.formed_stars = self.petar_code.particles.copy()
         self.channel_from_code_to_memmory = \

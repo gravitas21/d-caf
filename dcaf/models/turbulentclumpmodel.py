@@ -77,13 +77,19 @@ class TurbulentCoreParams:
         # Surface velocity dispersion
         b = (self.phi_Pc * self.phi_Pmean / A / (kP ** 2) / (self.phi_B ** 4)) ** (1.0 / 8.0)
         c = (self.Mc / (3000.0 | units.MSun)) ** 0.25
-        d = (self.surface_density / (1 | units.g * units.cm ** -2)) ** 0.25
+        d = (self.surface_density.value_in( units.g * units.cm ** -2) ) ** 0.25
         sigma_surf = (5.08 * b * c * d) | units.kms
 
         # Core radius
-        aR = (A / (kP ** 2) / self.phi_Pc / self.phi_Pmean) ** 0.25
-        bR = (self.Mc / (60 | units.MSun)) ** 0.5
-        cR = (self.surface_density / (1 | units.g * units.cm ** -2)) ** (-0.5)
+        #aR = (A / (kP ** 2) / self.phi_Pc / self.phi_Pmean) ** (1/4. )
+        #bR = (self.Mc / (60 | units.MSun)) ** (1./2)
+        #cR = (self.surface_density / (1 | units.g * units.cm ** -2)) ** (-1/2.)
+        #Rc = (0.071 * aR * bR * cR) | units.parsec
+
+        aR = float((A / (kP**2) / self.phi_Pc / self.phi_Pmean)**0.25)
+        bR = float((self.Mc / (60 | units.MSun)))**0.5
+        cR = float(self.surface_density.value_in(units.g * units.cm**-2) )**(-0.5)
+
         Rc = (0.071 * aR * bR * cR) | units.parsec
 
         # Volume-weighted (global) 1D sigma from surface scaling
@@ -168,7 +174,11 @@ def make_turbulent_core_cluster(
     m_sorted = masses[order]
 
     cmass = np.cumsum(m_sorted.value_in(units.MSun)) | units.MSun
-    r = (cmass / Mstars_eff) ** expo * params.Rc
+    ratio = (cmass / Mstars_eff)
+
+    r = params.Rc.value_in(units.parsec) * ( ratio ** expo ) 
+
+    r = r | units.parsec
 
     # Isotropic angles
     u = rng.uniform(size=n)
