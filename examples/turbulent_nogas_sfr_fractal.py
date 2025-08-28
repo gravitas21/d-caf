@@ -40,7 +40,8 @@ def star_factory(new_stars,current_stars):
     print('calling star factory')
     if len(current_stars) <=1:
         return new_stars
-    new_posvel = generate_fractal_cascade(current_stars,D_target=fractal_dimension,n_new=len(new_stars),return_as_particles=True)
+    new_posvel = generate_fractal_cascade(current_stars,D_target=fractal_dimension,n_new=len(new_stars),return_as_particles=True,
+        min_box = 22**params.Rc.value_in(units.pc) )
     new_posvel.mass = new_stars.mass
     print('done')
     return new_posvel

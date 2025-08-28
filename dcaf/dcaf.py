@@ -13,7 +13,7 @@ from amuse.couple.bridge import Bridge
 from amuse.community.petar.interface import Petar
 from amuse.io import write_set_to_file
 
-from dcaf.config.parameters import get_default_configuration
+from dcaf.utilities.parameters import get_default_configuration
 #from dcaf.framework import StarFormationFramework
 
 
