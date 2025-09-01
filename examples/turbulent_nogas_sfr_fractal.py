@@ -1,10 +1,9 @@
-
 from amuse.lab import units
 from dcaf.dcaf import DcafSystem
 from dcaf.models import turbulentclumpmodel as tcm
 from dcaf.framework import StarFormationFramework
 
-from dcaf.factory.fractal import generate_fractal_cascade
+from dcaf.factory.distance_based import generate_stars
 
 # --- User parameters ---
 Mc = 3000 | units.MSun          # Mass of the parent cloud [Msun]

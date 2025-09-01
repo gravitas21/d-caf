@@ -18,9 +18,11 @@ class PetarConfig:
     """
     def __init__(self,**kw):
         self.theta = 0.5
-        self.dt_soft = None
+        self.dt_soft = 0.125 | units.kyr
         self.redirection: str = "none"
         self.number_of_workers = 10
+        self.r_bin = 100 | units.au #binary regularization limit
+        self.r_out = 0.03 | units.parsec
 
 
 class BridgeConfig:

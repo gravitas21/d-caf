@@ -29,7 +29,7 @@ def generate_stars(existing,
                    n_new,
                    box_size = None,
                    pdf_func=lognormal_pdf,
-                   pdf_unit = None,
+                   pdf_unit = units.parsec,
                    min_separation=0.01 | units.parsec,
                    max_separation = 100 |units.parsec,
                    neighbor_k_vel=20,
@@ -52,6 +52,9 @@ def generate_stars(existing,
     if len(existing) == 0:
         raise ValueError("existing Particles is empty")
 
+    if n_new == 0 :
+        return Particles()
+
     # construct arrays without units for now
     if pdf_unit is None:
         L = existing.x.unit
@@ -69,7 +72,6 @@ def generate_stars(existing,
         existing.vy.value_in(S),
         existing.vz.value_in(S),
     ])
-
     # obtain PDF domain
     r_min = float(min_separation.value_in(L))
 
@@ -142,7 +144,6 @@ def generate_stars(existing,
                     ref_pool.remove(ref)
                     continue
 
-    # Pack back to AMUSE Particles
     new_parts = Particles(len(newP))
     if len(newP) > 0:
         newP = np.asarray(newP, float); newV = np.asarray(newV, float)
