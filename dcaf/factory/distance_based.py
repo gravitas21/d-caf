@@ -22,7 +22,8 @@ from scipy.spatial import cKDTree
 from amuse.datamodel import Particles
 from amuse.units import units
 from dcaf.utilities.sampler import PDFSampler, lognormal_pdf
-from dcaf.utilities.helpers import ( robust_stats, sample_sphere_surface )
+from dcaf.utilities.helpers import ( robust_stats, sample_sphere_surface,
+                                    weights_by_density)
 
 
 def generate_stars(existing,
@@ -33,6 +34,7 @@ def generate_stars(existing,
                    min_separation=0.01 | units.parsec,
                    max_separation = 100 |units.parsec,
                    neighbor_k_vel=20,
+                   beta = 1, #for density weights. 
                    seed=42):
     """
     Generate stars based on existing set sampling distances to old stars from a
@@ -94,6 +96,7 @@ def generate_stars(existing,
     cat_pos = pos0.copy()
     cat_vel = vel0.copy()
     tree = cKDTree(cat_pos)
+    weights = weights_by_density(cat_pos,tree=tree,beta = beta)
 
     # Adding the stars
     for _ in range(n_new):
@@ -106,8 +109,11 @@ def generate_stars(existing,
             # same reference star.
             ref_pool = list(range(len(pos0)))
             while len(ref_pool) > 0 : 
-                # --- choose a uniform reference among ORIGINAL stars ---
-                ref = gen.choice(ref_pool)
+                # --- choose reference particle among ORIGINAL stars ---
+                ### weight by density modulated by beta
+                p = weights[ref_pool]
+                p = p / p.sum()
+                ref = gen.choice(ref_pool,p=p )
                 center = pos0[ref]
 
                 # Find nearest neighbours on the surface of radius rtarget around the
@@ -151,17 +157,6 @@ def generate_stars(existing,
         new_parts.vx = newV[:, 0] | S; new_parts.vy = newV[:, 1] | S; new_parts.vz = newV[:, 2] | S
     return new_parts
 
-# tiny self-check
 if __name__ == "__main__":
-    N = 64
-    p = Particles(N)
-    p.x = np.random.uniform(0, 1, N) | units.parsec
-    p.y = np.random.uniform(0, 1, N) | units.parsec
-    p.z = np.random.uniform(0, 1, N) | units.parsec
-    p.vx = np.random.normal(0, 1, N) | units.kms
-    p.vy = np.random.normal(0, 1, N) | units.kms
-    p.vz = np.random.normal(0, 1, N) | units.kms
-
-    newp = generate_stars(p, 32, min_separation=0.02 | units.parsec)
-    print("generated", len(newp))
+    pass
 

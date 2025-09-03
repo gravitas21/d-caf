@@ -2,6 +2,7 @@
 Some reusable utility functions
 """
 import numpy as np
+from scipy.spatial import cKDTree
 
 def random_unit_vector(n_sample=1, gen=None, seed=42):
     """
@@ -75,3 +76,21 @@ def sample_sphere_surface(center, r, n, rng=None):
     P += np.asarray(center, dtype=float)
 
     return P
+
+
+def weights_by_density(pos, k=5, beta=1.0, tree = None):
+    """
+    Compute weighted probabilities based on local density
+    beta = 0   -> uniform
+    beta = 1   -> inverse density
+    0<beta<1   -> flattened
+    beta>1     -> higher weights for isolated particles
+    """
+    if tree is None:
+        tree = cKDTree(pos)
+    d, _ = tree.query(pos, k=k+1)
+    d_k = d[:, -1]
+    rho = k / (4/3 * np.pi * d_k**3)
+    w = 1.0 / (rho + 1e-12)
+    w = w ** beta
+    return w / w.sum()
