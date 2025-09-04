@@ -24,6 +24,7 @@ from amuse.lab import nbody_system, new_kroupa_mass_distribution, units, new_plu
 from dcaf.dcaf import DcafSystem
 from dcaf.framework import StarFormationFramework
 from dcaf.factory import distance_based
+from dcaf.utilities.parameters import get_default_configuration
 
 class MyFormationFramework(StarFormationFramework):
 
@@ -55,18 +56,20 @@ if __name__ == '__main__':
     # Create the final set of stars
     # Note that only the first batch of star will keep their original positions
 
-    ntot = 1000
-    Rpl = 1 |units.pc
+    ntot = 2000
+    Rpl = 0.5 |units.pc
     masses = new_kroupa_mass_distribution(ntot)
     converter = nbody_system.nbody_to_si(masses.sum(),Rpl)
+    nworkers = 50
+
 
     target_stars =  new_plummer_model(ntot,convert_nbody = converter)
     target_stars.mass = masses
 
     # Setup the final time and the star formation rate as constant
     t_end = 10 | units.Myr
-    # let just form stars continously until 5 Myr mark
-    star_formation_rate = masses.sum() / t_end*0.5
+    # let's form stars continously until 5 Myr mark
+    star_formation_rate = masses.sum() / t_end*0.25
 
     # star formation rate could be:
     #   - float : constant str
@@ -79,8 +82,13 @@ if __name__ == '__main__':
                                      nstart = 10 #initial batch of stars
                                      )
     
+    cfg = get_default_configuration()
+    cfg['petar'].number_of_workers = nworkers
+    #print(cfg['petar'].number_of_workers)
+    #exit()
+    
     # run with default code configuration 
-    System = DcafSystem( framework, converter = converter )
+    System = DcafSystem( framework, converter = converter, config= cfg )
     System.dt_out = 0.01 |units.Myr
 
     # Initialize the codes and add initial batch of stars

@@ -5,11 +5,82 @@ from amuse.datamodel.particles import Particles
 from collections import deque
 
 class StarFormationFramework :
+    """ Star Formation Framework 
+
+    This class handles the decision making during the star formation process. It
+    includes how fast stars form (star formation rate), what are the initial
+    phase-space coordinates of the new stars stars, what are the new phase-space
+    coordinates of those stars and how the background gas potential changes as
+    new stars form (e.g. via star formation efficiency) and any other more
+    complex formation mechanism the user may want to include.
+
+    Input: 
+        target_stars : amuse.Particles - The list of stars that will be added to
+            the simulation. The order of appearance will be the same as this
+            set.
+
+        star_formation_rate : The star formation rate at which new stars will
+            appear. If is an amuse.quantity (in e.g. Msun/Myr) the value will be
+            constant through the simulation.
+            If star_formation_rate == 'infty', all stars will be added at the
+            beginning of the simulation.
+            If a (time,star_formation_rate) tuple is provided, then the instant
+            star formation rate will be linearly interpolated over time within
+            the range provided by the table (note that time and
+            star_formation_rate should be amuse quantities'
+
+        nstart : int, The number of stars to form initially. The code will
+            advance the necessary time, derived from the star formation rate, in
+            order to reach the required mass to form these initial stars.
+
+        background_gas : a dcaf.backgroundgas.BackgroundPotential inherited
+            class. This class controls how the background gas evolves and react
+            to the formation of the new stars and provide the (additional)
+            acceleration felt by the star particles during the simulation.
+
+
+    The typical workflow will be by the User creating an inherited class using
+    StarFormationFramework as parent class and overwriting the appropiate
+    functions.
+
+    Stars will be added to the N-body simulation provided a star_formation_rate
+    value (function or table) and the form_stars method will be called at the
+    specific times where a new star is scheduled.
+
+    The typical method an User may want to redefine is:
+
+    StarFormationFramework.form_stars : Whenever new stars are shceduled to form
+        this is the function that will provide the new amuse.Particles to be
+        added. An external generator of stars can be placed here for finer
+        tuning on the coordinates of the new stas (for instance, based on the
+        positions of existing stars).
+
+
+    The background gas model should be defined by an inherited class from the
+    dcaf.bakgroundgas.BackgroundPotential that contain the necessary methods to
+    provide the potential and acceleration required by the bridge scheme.
+
+    This class can also be used for decision making at the generation of stars,
+    for instance, any BackgroundPotential inherited class should have defined
+    methods like: 
+        get_1d_velocity_dispersion_at_point : to obtain the velocity
+            dispersion at the position of the new star if we want the new star
+            to inherit the kinematics of the parent cloud. 
+    Or,
+        get_mass_inside_radius : to obtain the enclosed mass at the new particle
+            position in case we want that information instead.
+
+    Note that background_gas will be passed to the Bridge scheme to handle the
+        gas to stars interactionn, therefore must have defined the appropriate
+        get_gravity_at_point
+    """
+
     def __init__( self, target_stars, star_formation_rate = 'infty',
-                 nstart = 2):
+                 nstart = 2, background_gas = None):
         self.target_stars = target_stars
         self.star_formation_rate = star_formation_rate
         self.nstart = nstart
+        self.background_gas = background_gas
 
         self.initialize_framework()
 
@@ -31,7 +102,7 @@ class StarFormationFramework :
         """
         #retrieve the new stars and forward framework time to current time
         new_stars = self.__next_stars
-        self.current_time = self.__next_formation_time
+        self.model_time = self.__next_formation_time
         self.__setup_next_event()
 
         return new_stars

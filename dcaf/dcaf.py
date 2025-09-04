@@ -29,13 +29,15 @@ class DcafSystem:
     ):
         self.config = config or get_default_configuration()
 
-        self.gas_code = gas_code
         self.framework = framework
 
         self.dt_out = 0.5 | units.Myr   # TODO: move to config
         self.output_folder = output_folder
         self.snapshot_basename = "stars_"
         self.__current_snapshot = 0
+
+        if self.framework.background_gas:
+            self.gas_code = self.framework.background_gas
 
         # Converter: use provided one or derive from framework target stars
         stars0 = framework.target_stars
@@ -50,7 +52,7 @@ class DcafSystem:
         # Runtime state
         self.target_stars = stars0
         self.formed_stars = Particles()
-        self.current_time = None
+        self.model_time = None
 
         # Codes 
         self.petar_code = None
@@ -71,7 +73,7 @@ class DcafSystem:
         newstars = self.framework.form_stars(Particles())
 
         # Initialize time
-        self.current_time = tnext
+        self.model_time = tnext
         #TODO: For gas implementation, make sure here that the gas evolve up to
         # this point
 
@@ -80,9 +82,9 @@ class DcafSystem:
         if self.gas_code is not None:
             self._setup_bridge()
             # In this framework we only need gas to star interaction
-            self.bridge_code.add_system(self.petar_code, (self.gas_code,))
-            if self.gas_code is not None:
-                self.bridge_code.add_system(self.gas_code, None)
+            self.bridge_code.add_system(self.petar_code, (self.gas_code,),False)
+            #if self.gas_code is not None:
+            #    self.bridge_code.add_system(self.gas_code)#, (None, ) )
             self.code = self.bridge_code
         else:
             self.bridge_code = None
@@ -102,6 +104,7 @@ class DcafSystem:
                                 redirection = cfg.redirection,
                                 number_of_workers = cfg.number_of_workers)
 
+        self.petar_code.parameters.theta = cfg.number_of_workers
         self.petar_code.parameters.theta = cfg.theta
         self.petar_code.parameters.r_bin = cfg.r_bin
         self.petar_code.parameters.r_out = cfg.r_out 
@@ -116,18 +119,19 @@ class DcafSystem:
 
     def setup_gas(self):
         # TODO: add setup gas routine to StarFormationFramework
+        #   I think we don need this with the current implementation
         pass
 
     # --- main loop ---------------------------------------------------------
 
     def evolve_model(self, t_end):
         """Advance the coupled system to t_end, interleaving outputs and formation events."""
-        if self.current_time is None:
+        if self.model_time is None:
             raise RuntimeError("Call initialize_system() before evolve_model().")
 
         print(f"Evolving to {t_end}")
 
-        time = self.current_time
+        time = self.model_time
         t_output = time + self.dt_out
 
         while time < t_end:
@@ -140,10 +144,9 @@ class DcafSystem:
             event_times = (t_end, t_output, tnext)
             i_event, t_stop = min(enumerate(event_times), key=lambda x: x[1])
             t_stop = min(t_end, t_output, tnext)
-            print(f"evolving from (event: {i_event}) {self.current_time} -> {t_stop}")
+            print(f"evolving from (event: {i_event}) {self.model_time} -> {t_stop}")
 
             # Evolve dynamics up to t_stop if we actually need to advance time
-            # Optional safety: avoid evolving with <2 particles if you suspect PeTar dislikes that
             n_now = len(self.petar_code.particles)
             if (time < t_stop) and (n_now >= 2 or n_now == 0):
                 # Evolve only if there is either a reasonable N or no stars (some codes allow)
@@ -151,11 +154,12 @@ class DcafSystem:
 
             # Update clock
             time = t_stop
-            self.current_time = time
+            self.model_time = time
 
             # 1) Output event
             if i_event == 1:
-                print("####################### WRITING OUTPUT #######################")
+                print("Snap: %i, Time %s ### WRITING OUTPUT \
+                      #######################"%(self.__current_snapshot,self.model_time) )
                 self.write_output()
                 t_output += self.dt_out
 
@@ -177,10 +181,14 @@ class DcafSystem:
         filename = os.path.join(self.output_folder, f"{self.snapshot_basename}{self.__current_snapshot:03d}")
         print(f"Writing output to {filename}.hdf5")
         output_stars = self.formed_stars.copy()
-        output_stars.collection_attributes.timestamp = self.current_time.in_(
+        output_stars.collection_attributes.model_time = self.model_time.in_(
                 units.Myr)
-        write_set_to_file(self.formed_stars, filename + ".hdf5")
+        write_set_to_file(self.formed_stars, filename + ".amuse",format='amuse')
         self.__current_snapshot += 1
+
+        if self.framework.background_gas:
+            if hasattr(self.framework.background_gas,'write_output'):
+                self.framework.background_gas.write_output()
 
     # --- internals ---------------------------------------------------------
 
