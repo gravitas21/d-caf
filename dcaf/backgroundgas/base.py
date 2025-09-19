@@ -19,7 +19,7 @@ class BackgroundPotential:
         self.rscale = rscale
 
         # What attributes should be saved into a file?
-        self.logfile = open('background_gas.dat','a')
+        self.logfile = open('background_gas.dat','a',1)
         self.output_attributes = ['mtot','rscale' ] 
         self.output_units = [ units.MSun, units.parsec  ]
         self.__first_output = True

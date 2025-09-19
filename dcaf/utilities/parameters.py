@@ -1,5 +1,6 @@
 # TODO: I am not sure how to handle the configuration yet.. lets decide after
 # the script gets more complex
+from amuse.units import nbody_system, units
 from amuse.units import units
 
 class PetarConfig:
@@ -18,7 +19,8 @@ class PetarConfig:
     """
     def __init__(self,**kw):
         self.theta = 0.5
-        self.dt_soft = 0.125 | units.kyr
+        #self.dt_soft = 0.125 | units.kyr
+        self.dt_soft = 2**(-15) | nbody_system.time
         self.redirection = "none"
         self.number_of_workers = 10
         self.r_bin = 100 | units.au #binary regularization limit
@@ -28,7 +30,7 @@ class PetarConfig:
 class BridgeConfig:
     """Bridge coupling configuration."""
     def __init__(self,**kw):
-        self.timestep =  0.01 | units.Myr #interaction timestep
+        self.timestep =  0.001 | units.Myr #interaction timestep
         self.use_threading = False
         self.verbose = True
 

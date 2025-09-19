@@ -2,6 +2,7 @@ from __future__ import annotations
 from amuse.units import units
 from amuse.units.constants import G
 from .base import BackgroundPotential
+import numpy as np
 
 class PlummerSphere(BackgroundPotential):
     """
@@ -53,8 +54,9 @@ class PlummerSphere(BackgroundPotential):
             sigma_1D^2(r,alpha_vir) = sigma_1D^2(r) * sqrt(alpha_vir)
         """
         a = self.rscale
-        r = np.sqrt(x**2 + y**2 + z**2)
-        sigma2 = (G * self.mtot) / (6.0 * a) * (1.0 + (r/a)**2)**(-0.5) * self.alpha_vir
+        a2 = a**2
+        r2 = x**2 + y**2 + z**2
+        sigma2 = (G * self.mtot) / (6.0 * a) * (1.0 + (r2/a2) )**(-0.5) * self.alpha_vir
         return sigma2.sqrt()
 
     def evolve_model(self, tend):

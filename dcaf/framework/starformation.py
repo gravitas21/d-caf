@@ -1,4 +1,5 @@
 from math import isfinite
+import numpy as np
 from amuse.units import units
 from amuse.datamodel.particles import Particles
 #pop would do, but this is more efficient
@@ -76,19 +77,14 @@ class StarFormationFramework :
     """
 
     def __init__( self, target_stars, star_formation_rate = 'infty',
-                 nstart = 2, background_gas = None):
+                 nstart = 2, background_gas = None ,
+                 dt_tolerance = 1e-3 | units.Myr):
         self.target_stars = target_stars
         self.star_formation_rate = star_formation_rate
         self.nstart = nstart
         self.background_gas = background_gas
+        self.dt_tolerance = dt_tolerance
 
-        self.initialize_framework()
-
-    def initialize_framework(self):
-        """
-        This method is called at __init__(). Leave it here in case the user
-        needs to perform extra initialization steps.
-        """
         self.schedule_formation()
 
     def get_next_formation_time(self):
@@ -107,8 +103,7 @@ class StarFormationFramework :
 
         return new_stars
 
-    def schedule_formation(self, t0=0 | units.Myr, 
-                           dt_tolerance = 1e-12 |units.Myr):
+    def schedule_formation(self, t0=0 | units.Myr ):
         """
         Build a schedule of star-formation in batches. The sequence of formation
         follows the order of stars. If another sequence is needed, resort the
@@ -185,7 +180,7 @@ class StarFormationFramework :
             this_time = per_star_times[i]
             # If last batch has same time, append to it
             if ( formation_times 
-                    and abs(this_time - formation_times[-1]) < dt_tolerance
+                    and abs(this_time - formation_times[-1]) < self.dt_tolerance
                 ):
                 formation_sequence[-1].add_particles(stars[i:i+1])
             else:
@@ -198,12 +193,25 @@ class StarFormationFramework :
         self.__setup_next_event()
 
     def __setup_next_event(self):
-
+        print('settingup',len(self.formation_sequence) )
         if len(self.formation_sequence) > 0:
             newstars = self.formation_sequence.popleft()
             formation_time = self.formation_times.popleft()
             self.__next_formation_time = formation_time
             self.__next_stars = newstars
+        else:
+            self.__next_formation_time = None
+            self.__next_stars = None
+
+    def get_velocity_dispersion_at_point(self,x,y,z):
+        if self.background_gas:
+            return self.background_gas.get_1d_velocity_dispersion_at_point(x,y,z)
+        else:
+            # fallback to current stars velocity dispersion
+            vx = self.target_stars.vx.std()
+            vy = self.target_stars.vy.std()
+            vz = self.target_stars.vz.std()
+            return np.mean([vx,vy,vz])
 
     def form_stars(self,active_stars=Particles()):
         """

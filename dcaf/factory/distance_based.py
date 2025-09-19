@@ -25,7 +25,6 @@ from dcaf.utilities.sampler import PDFSampler, lognormal_pdf
 from dcaf.utilities.helpers import ( robust_stats, sample_sphere_surface,
                                     weights_by_density)
 
-
 def generate_stars(existing,
                    n_new,
                    box_size = None,
@@ -34,7 +33,8 @@ def generate_stars(existing,
                    min_separation=0.01 | units.parsec,
                    max_separation = 100 |units.parsec,
                    neighbor_k_vel=20,
-                   beta = 1, #for density weights. 
+                   beta = 1, #for density weights.
+                   framework = None,
                    seed=42):
     """
     Generate stars based on existing set sampling distances to old stars from a
@@ -48,8 +48,12 @@ def generate_stars(existing,
     2) Build a PDFSampler once over [r_min, r_max] for the requested PDF
     3) Keep an evolving catalogue (cat_pos, cat_vel) and KD-tree for min-sep
     4) For each new star: sample distance r, pick a uniform reference, place in
-       a random direction, enforce min-sep, set velocity from neighbors 
-    5) Return the new AMUSE Particles
+       a random direction, enforce min-sep, 
+    5) If no framework was given, set velocity from velocity dispersion of
+    neighbors. If framework is given, will call framework.method,
+    get_velocity_dispersion_at_point 
+
+    6) Return the new AMUSE Particles
     """
     if len(existing) == 0:
         raise ValueError("existing Particles is empty")
@@ -132,12 +136,26 @@ def generate_stars(existing,
                     pick = gen.choice(np.flatnonzero(valid))
                     cand = C[pick]
 
-                    # velocity from neighbors (median removed; per-axis MAD dispersion)
+                    # velocity from neighbors 
                     kk  = min(max(2, neighbor_k_vel), len(cat_pos))
                     nbr = tree.query(cand[None, :], k=kk)[1]
                     nbr = np.atleast_1d(nbr).reshape(-1)
-                    _, v_sig = robust_stats(cat_vel[nbr])
-                    v = gen.normal(0.0, 1.0, 3) * v_sig
+                    v_med, v_sig = robust_stats(cat_vel[nbr])
+
+                    if framework:
+                        x,y,z = cand | L
+                        v_sig = framework.get_velocity_dispersion_at_point(x,y,z)
+                        v_sig = v_sig.value_in(S)
+
+                    ## keep the total velocity consistent with v_sig and moving
+                    # along its neighbours
+                    kk_eff = max(kk,10) # avoid just copying the neighbour
+                                        #velocity at small kk 
+                    resid = (1.0 - 1.0/float(kk_eff)) ** 0.5
+                    eps = gen.normal(0.0, 1.0, 3)
+                    v =  v_med + resid * (eps * v_sig)
+
+                    #v = gen.normal(0.0, 1.0, 3) * v_sig + v_med
 
                     # accept and update catalogue + tree
                     newP.append(cand); newV.append(v)
