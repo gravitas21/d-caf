@@ -149,6 +149,7 @@ class DcafSystem:
             self.logger.info('[DCAF] effective dt_soft changed from'
                     f' {self.config["petar"].dt_soft}'
                     f' {self.converter.to_nbody(self.dt_soft_eff)}'
+                    f' ({self.dt_soft_eff.in_(units.Myr)})'
                     )
             if abs(self.converter.to_nbody(self.dt_soft_eff)
                 - self.config["petar"].dt_soft) > 1e-15 |nbody_system.time:

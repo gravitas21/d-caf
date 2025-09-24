@@ -12,5 +12,6 @@ setup(
         "matplotlib",
         "pyyaml"
     ],
+    scripts=["scripts/dcaf_analysis"],
     python_requires=">=3.11",
 )
