@@ -29,16 +29,18 @@ class PlummerSphere(BackgroundPotential):
 
     def get_potential_at_point(self, eps, x, y, z):
         r2 = x**2 + y**2 + z**2
-        return - G * self.mtot / (r2).sqrt()
+        a2 = self.rscale**2
+        return - G * self.mtot / (r2-a2).sqrt()
 
     def get_gravity_at_point(self, eps, x, y, z):
         r2 = x**2 + y**2 + z**2
-        denom32 = (r2)**1.5
+        a2 = self.rscale**2
+        denom32 = (r2 + a2)**1.5
         coef = - G * self.mtot / denom32
-        static_coef = coef * x, coef * y, coef * z
-
-
-        return static_coef
+        ax = coef * x
+        ay = coef * y
+        az = coef * z
+        return ax, ay, az
 
     def get_mass_inside_radius(self, r):
         return self.mtot * r**3 / (r**2 + self.rscale**2)**1.5
@@ -71,3 +73,4 @@ class PlummerSphere(BackgroundPotential):
         if self.mtot < (0.0 | self.mtot.unit):
             self.mtot = 0.0 | self.mtot.unit
         self.model_time = tend
+        return

@@ -14,8 +14,10 @@ from amuse.io import write_set_to_file
 
 from dcaf.utilities.parameters import get_default_configuration
 from dcaf.utilities.logger import setup_logger
-# from dcaf.framework import StarFormationFramework  
+from dcaf.utilities.config import load_config
 
+#cfg = load_config("config.yaml")
+# from dcaf.framework import StarFormationFramework  
 
 class DcafSystem:
     def __init__(
@@ -175,7 +177,7 @@ class DcafSystem:
             #initialize bridge
             if self.gas_code is not None:
                 n_timestep = 1 # every how many blocktimesteps should we do a kick?
-                self._setup_bridge( n_timestep * self.dt_soft_eff )
+                self._setup_bridge()
 
                 self.logger.info('[DCAF] [BRIDGE] setup with effective time-step: '
                                  f'{(self.dt_soft_eff * n_timestep).in_(units.Myr)}')
@@ -205,8 +207,14 @@ class DcafSystem:
         self.petar_code.parameters.r_out = cfg.r_out 
         self.petar_code.parameters.dt_soft = cfg.dt_soft
 
-    def _setup_bridge(self, timestep):
+    def _setup_bridge(self):
         cfg = self.config["bridge"]
+        if cfg.timestep is None:
+            timestep = self.dt_soft_eff
+        else:
+            timestep = cfg.timestep
+
+
         self.bridge_code = Bridge(timestep = timestep,
                                   use_threading=cfg.use_threading,
                                   verbose=cfg.verbose)

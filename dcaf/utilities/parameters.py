@@ -30,7 +30,7 @@ class PetarConfig:
 class BridgeConfig:
     """Bridge coupling configuration."""
     def __init__(self,**kw):
-        self.timestep =  0.001 | units.Myr #interaction timestep
+        self.timestep = None#, 0.001 | units.Myr #interaction timestep
         self.use_threading = False
         self.verbose = True
 
