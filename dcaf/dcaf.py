@@ -9,7 +9,13 @@ from amuse.datamodel import Particles
 from amuse.units.constants import G
 from amuse.units import units, nbody_system
 from amuse.couple.bridge import Bridge
-from amuse.community.petar.interface import Petar
+try: 
+    from amuse.community.petar.interface import Petar
+    PETAR_INSTALLED = True
+except:
+    print('Warning PeTar not installed, can not run simulations' )
+    PETAR_INSTALLED = False
+
 from amuse.io import write_set_to_file
 
 from dcaf.utilities.parameters import get_default_configuration
@@ -103,9 +109,12 @@ class DcafSystem:
             self._formed_stars = self.petar_code.particles.copy()
             self._formed_stars.collection_attributes.code_time = self.petar_code.model_time
 
-
     def initialize_system(self):
         """Instantiate PeTar and, if present, Bridge. Also, add initial stars."""
+        if not PETAR_INSTALLED:
+            print('PeTar not installed. System not initialized')
+            return
+
         with self.logger.timing('[DCAF] Initializing system *********************'):
             # lets validate the framework before anything:
             dt_soft = self.config["petar"].dt_soft  #should be nbody
