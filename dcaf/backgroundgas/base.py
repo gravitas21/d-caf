@@ -1,6 +1,7 @@
 from amuse.units import units
 from amuse.units.quantities import zero
 import numpy as np
+import os
 
 class BackgroundPotential:
     """
@@ -19,7 +20,8 @@ class BackgroundPotential:
         self.rscale = rscale
 
         # What attributes should be saved into a file?
-        self.logfile = open('background_gas.dat','a',1)
+        self.logfile = None
+        self.logfilename = 'background_gas.dat'
         self.output_attributes = ['mtot','rscale' ] 
         self.output_units = [ units.MSun, units.parsec  ]
         self.__first_output = True
@@ -37,6 +39,24 @@ class BackgroundPotential:
         Should return (ax, ay, az).
         """
         raise NotImplementedError
+
+    def _ensure_logfile(self):
+        #Open logfile if needed. If the file already exists, assume the header
+        #was written in a previous session and keep __first_output = False.
+        #This is needed when rebuilding dcaf system, because closing bridge
+        #calls the cleanup_code here that we need to be clean but it closes 
+        #our logfile
+        if self.logfile is not None and not self.logfile.closed:
+            return
+
+        file_exists = os.path.exists(self.logfilename)
+        mode = "a" if file_exists else "w"
+        self.logfile = open(self.logfilename, mode)
+
+        if file_exists:
+            self.__first_output = False
+        else:
+            self.__first_output = True
 
     def get_mass_inside_radius(self, r):
         """
@@ -63,6 +83,9 @@ class BackgroundPotential:
         pass
 
     def write_output(self):
+
+        self._ensure_logfile()
+
         if self.__first_output:
             header = ['# Time [Myr]']
             header += [f'{k} [{u}]' if u is not None else k

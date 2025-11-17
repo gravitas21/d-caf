@@ -21,8 +21,8 @@ class PetarConfig:
         self.theta = 0.5
         #self.dt_soft = 0.125 | units.kyr
         self.dt_soft = 2**(-15) | nbody_system.time
-        self.redirection = "none"
-        self.number_of_workers = 10
+        self.redirection = "file"
+        self.number_of_workers = 1
         self.r_bin = 100 | units.au #binary regularization limit
         self.r_out = 0.03 | units.parsec
 

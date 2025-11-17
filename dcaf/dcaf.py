@@ -3,6 +3,7 @@ D-CAF: Dynamic Cluster Assembly Framework
 """
 from __future__ import annotations
 import os
+from re import U
 import numpy as np
 
 from amuse.datamodel import Particles
@@ -32,11 +33,14 @@ class DcafSystem:
         config = None,
         converter = None,
         gas_code = None,
+        track_background_gas_energy = True, 
         output_folder = "./dcaf_output/",
-        log_level = 'debug'
+        log_level = 'debug',
+        stars_per_worker = None,
+        workers_step = 5
     ):
         self.config = config or get_default_configuration()
-
+        self.workers_step = workers_step # how many workers to increase
 
         self.framework = framework
 
@@ -45,6 +49,8 @@ class DcafSystem:
         self.snapshot_basename = "stars_"
         self.__current_snapshot = 0
         self.logger = setup_logger(self.output_folder,log_level)
+        self.stars_per_worker = stars_per_worker
+        self._current_workers = None
 
         if self.framework.background_gas:
             self.gas_code = self.framework.background_gas
@@ -77,7 +83,7 @@ class DcafSystem:
         self.dt_soft_eff = None
 
         # Energy checks
-        self._total_energy = [0 | units.J, 0 | units.J]        # [previous, current]
+        self._total_energy = [0 |units.J,0 | units.J]  # [previous, current]
         # Energy components
         # [Tstars, Ustars_self, U_stars_gas, W_gas]
         self._energy_components = [0 | units.J]*4
@@ -87,6 +93,9 @@ class DcafSystem:
         self._energy_header_written = False
         # last step, cumulative
         self._energy_errors = [0, 0]
+        self._gas_tracker = None
+        self._last_energy_check = None
+        self.track_background_gas_energy = track_background_gas_energy
 
     @property
     def formed_stars(self):
@@ -194,6 +203,11 @@ class DcafSystem:
                 self.bridge_code.add_system(self.petar_code,(self.gas_code,),False)
                 # is this line needed?
                 self.bridge_code.add_system(self.gas_code,)
+
+                if self.track_background_gas_energy :
+                    self._gas_tracker = GasEnergyTracker(self)
+                    self.bridge_code.add_system( self._gas_tracker )
+
                 self.code = self.bridge_code
             else:
                 self.logger.info('[DCAF][BRIDGE] no BGAS found. Evolving only with '
@@ -204,12 +218,17 @@ class DcafSystem:
         self.write_output()
 
     # --- setup helpers -----------------------------------------------------
-    def _setup_petar(self):
-        """Initialize PeTar. No particles are added here."""
+    def _setup_petar(self,nworkers = None):
+        """Initialize PeTar. No particles are added here.
+            nworkers: if not given, is retrieved from config
+        """
         cfg = self.config["petar"]
+        if nworkers is None:
+            nworkers = cfg.number_of_workers
         self.petar_code = Petar(self.converter,mode = 'cpu',
                                 redirection = cfg.redirection,
-                                number_of_workers = cfg.number_of_workers)
+                                number_of_workers = nworkers )
+        self._current_workers = nworkers
 
         self.petar_code.parameters.theta = cfg.theta
         self.petar_code.parameters.r_bin = cfg.r_bin
@@ -232,6 +251,51 @@ class DcafSystem:
         # TODO: add setup gas routine to StarFormationFramework
         #   I think we dont need this with the current implementation
         pass
+
+
+    # -- helpers for the restart --------------------------------------------
+
+    def _rebuild_system(self, nworkers):
+        """
+        Stop current PeTar, create a new instance with nworkers, and re-attach
+        it (and Bridge if present) with the existing particles and model_time.
+        """
+        # grab current state
+        old_petar = self.petar_code
+        stars     = old_petar.particles.copy()
+        t_now     = old_petar.model_time
+
+        # stop old instance
+        old_petar.stop()
+        if self.bridge_code :
+            self.bridge_code.stop()
+
+        # update config so future calls know the current worker count
+        # self.config["petar"].number_of_workers = nworkers
+
+        # build new PeTar with same converter/params but new worker count
+        self.logger.info(f"[DCAF][SCALING] Rebuilding PeTar with {nworkers} workers")
+        self._setup_petar(nworkers = nworkers)  # uses self.config["petar"]
+
+        # restore particles and time
+        self.petar_code.particles.add_particles(stars)
+        self.petar_code.model_time = t_now
+        self.petar_code.parameters.begin_time = t_now
+
+        # rebuild Bridge if we have gas; otherwise just use PeTar directly
+        if getattr(self, "gas_code", None) is not None:
+            self._setup_bridge()
+            self.bridge_code.add_system(self.petar_code, (self.gas_code,), False)
+            self.bridge_code.add_system(self.gas_code)
+            # if you later have an observer/tracker, re-add it here as well
+            if self.track_background_gas_energy:
+                self.bridge_code.add_system( self._gas_tracker )
+            self.code = self.bridge_code
+            self.logger.info("[DCAF][SCALING] Bridge rebuilt after PeTar rescale")
+        else:
+            self.bridge_code = None
+            self.code = self.petar_code
+
 
     # --- main loop ---------------------------------------------------------
 
@@ -287,7 +351,22 @@ class DcafSystem:
                     new_stars = self.framework.form_stars(self.formed_stars)
                 self._add_new_stars(new_stars)
 
-            # --- I/O ---------------------------------------------------------------
+            # check if we need to rescale
+            if self.stars_per_worker is not None:
+                nstars = len(self.petar_code.particles)
+                #desired_workers = max((nstars - 1) // self.stars_per_worker + 1, 1)
+                k = (nstars - 1) // self.stars_per_worker   # 0,1,2,...
+                desired_workers = max(1 + k * self.workers_step, 1)
+                if desired_workers > self._current_workers:
+                    self.logger.info(
+                        "[DCAF][SCALING] Rescaling PeTar workers from "
+                        f"{self._current_workers} to {desired_workers} "
+                        f"at N={nstars}"
+                    )
+                    self._rebuild_system(desired_workers)
+
+
+    # --- I/O ---------------------------------------------------------------
 
     def write_output(self):
         with self.logger.timing('[WRITING OUTPUT]', False):
@@ -400,6 +479,11 @@ class DcafSystem:
 
 
     def _energy_check(self):
+        first_check = False
+        if self._last_energy_check is None:
+            self._last_energy_check = self.model_time
+            first_check = True
+
         stars = self.formed_stars
         # Ekin
         v2 = stars.vx**2 + stars.vy**2 + stars.vz**2
@@ -412,16 +496,39 @@ class DcafSystem:
         if getattr(self, "gas_code", None) is not None:
             phi = self.gas_code.get_potential_at_point(0 | units.m, stars.x, stars.y, stars.z)
             U_stars_gas = (stars.mass * phi).sum()
+            #if not np.is_finite(U_stars_gas):
+                #print('not finite background gas energy',U_stars_gas)
+                #raise Exception
         else:
             U_stars_gas = 0 | units.J
 
-        W_gas = 0 | units.J  # constant background TODO
-        # to the total energy I should add here the W_gas difference between
-        # last check and now. This W_gas should be tracked internally by the 
-        # gas_code every time bridge sends a kick.
+        # --- work done by evolving gas potential (dPhi/dt term) ---
+        W_gas = 0 | units.J  # work done by the gas
+        if (getattr(self, "gas_code", None) is not None and 
+            self._gas_tracker is not None ):
+            #dt = self.model_time - self._last_energy_check
+            #if dt > 0 | units.s:
+            #    dphi_dt = self.gas_code.get_potential_derivative_at_point(
+            #        stars.x, stars.y, stars.z
+            #    )
+            #    W_gas = (stars.mass * dphi_dt).sum() * dt
+
+                # add only to the gas-evolution budget
+                # (total energy itself is still T + U_self + U_bg)
+            W_gas = self._gas_tracker.retrieve_stored_energy()
+            self._energy_components[3] = W_gas
+            self._energy_budgets[2] += W_gas
+
+        #current total energy
+        Etot = Tstars + Ustars_self + U_stars_gas + W_gas
+
+        if first_check:
+            # initial energy: we start with zero difference
+            self._total_energy[0] = Etot
+            self._total_energy[1] = Etot
 
         self._total_energy[0] = self._total_energy[1]
-        self._total_energy[1] = Tstars + Ustars_self + U_stars_gas 
+        self._total_energy[1] = Etot
 
         # numerical errors 
         eps          = np.abs(self._total_energy[1] - self._total_energy[0])
@@ -431,6 +538,8 @@ class DcafSystem:
         self._energy_components = [Tstars, Ustars_self, U_stars_gas, W_gas]
         self._energy_errors[0] = relative_error # step error
         self._energy_errors[1] += relative_error # cumulative error
+
+        self._last_energy_check = self.model_time 
 
     def _write_energy_row(self):
         """
@@ -521,5 +630,51 @@ class DcafSystem:
                 "dcaf.framework.starformation.StarFormationFramework this means "
                 "setting the dt_tolerance > dt_soft "
             )
+
+
+class GasEnergyTracker:
+    """
+    This is a helper class to pass into Bridge in order to keep track of the
+    work done by the gas at Bridge timestep level for energy conservation check.
+
+    """
+    def __init__(self, dcaf):
+        self.dcaf = dcaf
+        self.model_time = 0 | units.s   # Bridge reads this
+        self.W_gas = 0 | units.J
+        self._last_sum = None
+    def get_gravity_at_point(self, *args, **kwargs):
+        zero = 0 | units.ms**2
+        return zero, zero, zero
+    def get_potential_at_point(self, *args, **kwargs):
+        return 0 | (units.kms**2)       # inert potential
+    def stop(self, *args, **kwargs):
+        pass
+        return 
+    # Called each Bridge substep
+    def evolve_model(self, t_next):
+        t_prev = self.model_time
+        dt = t_next - t_prev
+        stars = self.dcaf.petar_code.particles
+        #print('here',type(stars),len(stars))
+        #exit()
+        if dt > 0 | units.s and getattr(self.dcaf, "gas_code", None) is not None:
+            #x, y, z, m = stars.get_values_in_store(attributes=['x','y','z','mass'])
+
+            dphi_dt = self.dcaf.gas_code.get_potential_derivative_at_point(
+                stars.x, stars.y, stars.z
+            )
+            sum_now = (stars.mass * dphi_dt).sum()
+            if self._last_sum is not None:
+                self.W_gas += 0.5*( self._last_sum + sum_now  )*dt
+            self._last_sum = sum_now
+
+        self.model_time = t_next
+
+    def retrieve_stored_energy(self):
+        wout = self.W_gas
+        self.W_gas = 0 | units.J
+        return wout
+
 if __name__ == "__main__":
     pass

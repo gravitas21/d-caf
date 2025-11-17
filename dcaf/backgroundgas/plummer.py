@@ -51,7 +51,10 @@ class PlummerSphere(BackgroundPotential):
     def get_potential_at_point(self, eps, x, y, z):
         r2 = x**2 + y**2 + z**2
         a2 = self.rscale**2
-        return - G * self.mtot / (r2-a2).sqrt()
+        #print('time',self.model_time)
+        #print('r2,a2,mtot',r2,a2,self.mtot)
+        #print
+        return - G * self.mtot / (r2+a2).sqrt()
 
     def get_gravity_at_point(self, eps, x, y, z):
         r2 = x**2 + y**2 + z**2
@@ -99,34 +102,32 @@ class PlummerSphere(BackgroundPotential):
         # current to new time interval
         t = tend
         t0 = self.t0
-        tb = self.t_ge
+        tge = self.t_ge
         tcol = self.t_col
         texp = self.t_exp
 
         # --- radius evolution ---
-        if t <= tb:
+        if t <= tge:
             # collapse phase
-            if tcol == zero:
-                return self.rscale
-            else:
-                fac = max(0.0, 1.0 - (t - t0)/max(tcol, 1e-12))
+            if tcol > zero:
+                fac =  1.0 - (t - t0)/tcol 
                 self.rscale = self.rscale_0 * fac**0.5
         else:
             # expansion phase
             # compute a at the break to ensure continuity
-            if t_col == zero:
+            if tcol == zero:
                 a_break = self.rscale_0
             else:
-                facb = max(0.0, 1.0 - (tb - t0)/max(tcol, 1e-12))
+                facb =  1.0 - (tge - t0)/tcol
                 a_break = self.rscale_0 * facb**0.5
-            self.rscale = a_break * np.exp((t - tb)/max(texp, 1e-12))
+            self.rscale = a_break * np.exp((t - tge)/texp )
 
         # --- mass evolution ---
-        if t <= tb:
+        if t <= tge:
             self.mtot = self.mtot_0 + self.mdot * (t - t0)
         else:
             # constant after break
-            self.mtot = self.mtot_0 + self.mdot * (tb - t0)
+            self.mtot = self.mtot_0 + self.mdot * (tge - t0)
 
         if self.mtot < (0.0 | self.mtot.unit):
             self.mtot = 0.0 | self.mtot.unit
@@ -134,3 +135,78 @@ class PlummerSphere(BackgroundPotential):
         # update model clock
         self.model_time = t
         return
+
+    def get_potential_derivative_at_point(self, x, y, z):
+        r2 = x**2 + y**2 + z**2
+        R  = (r2 + self.rscale**2).sqrt()
+
+        Mdot = self.mdot if self.model_time <= self.t_ge else 0 | self.mdot.unit
+        if self.model_time <= self.t_ge:
+            if self.t_col > zero:
+                adot = -0.5 * ( self.rscale_0**2 )  / self.rscale / self.t_col
+            else:
+                adot = 0 | units.pc/ units.Myr
+        else:
+            adot = self.rscale / self.t_exp
+
+
+        term1 = -G*Mdot/R
+
+        term2 =   G * self.mtot * self.rscale * adot / (R**3)
+
+        return term1 + term2
+
+def test_plummer_evolution(
+    mtot = 1e5 | units.MSun,
+    rscale = 1 | units.pc,
+    mdot = -1e4 | (units.MSun / units.Myr),
+    t0 = 0 | units.Myr,
+    t_ge = 3 | units.Myr,
+    t_col = 5 | units.Myr,
+    t_exp = 2 | units.Myr,
+    model = None ,
+    times = [0, 1, 2, 3, 4, 6, 8] | units.Myr,
+    test_position = 'auto'
+    ):
+    """
+    Test the evolution of the plummer model.
+    model is an instance of the cloud, if given, then the parameters are ignored
+    the the model instance is used instead.
+    """
+
+    if model is None:
+        model = PlummerSphere(
+            mtot=mtot,
+            rscale=rscale,
+            mdot=mdot,
+            t0=t0,
+            t_ge=t_ge,
+            t_col=t_col,
+            t_exp=t_exp,
+            alpha_vir=1.0
+        )
+
+    # --- test times and point ---
+    if test_position == 'auto':
+        xtest = 0|units.pc
+        ytest = 0|units.pc
+        ztest = model.rscale
+    else:
+        xtest,ytest,ztest = test_position
+
+    print(f"{'t [Myr]':>8} {'a [pc]':>10} {'M [Msun]':>12} "
+          f"{'Phi(r)':>9} {'dPhi/dt':>15}")
+    print("-" * 60)
+    for t in times:
+        model.evolve_model(t)
+        phi = model.get_potential_at_point(0|units.pc,xtest,ytest,ztest)
+        phidot = model.get_potential_derivative_at_point(xtest,ytest,ztest)
+
+        print(f"{t.value_in(units.Myr):8.2f} "
+              f"{model.rscale.value_in(units.pc):10.3f} "
+              f"{model.mtot.value_in(units.MSun):12.1f} "
+              f"{phi.value_in(units.kms**2):12.3e}"
+              f"{phidot.value_in(units.kms**2/units.Myr):12.3e}")
+
+if __name__ == "__main__":
+    test_plummer_evolution()
