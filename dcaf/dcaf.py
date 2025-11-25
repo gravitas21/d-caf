@@ -3,7 +3,6 @@ D-CAF: Dynamic Cluster Assembly Framework
 """
 from __future__ import annotations
 import os
-from re import U
 import numpy as np
 
 from amuse.datamodel import Particles
@@ -84,10 +83,10 @@ class DcafSystem:
 
         # Energy checks
         self._total_energy = [0 |units.J,0 | units.J]  # [previous, current]
-        # Energy components
-        # [Tstars, Ustars_self, U_stars_gas, W_gas]
-        self._energy_components = [0 | units.J]*4
-        # Cumulatie individual energy budgets
+        # Energy components for the stars
+        # [Tstars, Ustars_self, U_stars_gas]
+        self._energy_components = [0 | units.J]*3
+        # Cumulative individual energy budgets
         # [ E_new_stars, E_SE, E_gas_evol, E_binaries ]
         self._energy_budgets = [0 | units.J]*4
         self._energy_header_written = False
@@ -502,7 +501,10 @@ class DcafSystem:
         else:
             U_stars_gas = 0 | units.J
 
-        # --- work done by evolving gas potential (dPhi/dt term) ---
+        #current total energy
+        Etot = Tstars + Ustars_self + U_stars_gas
+
+        # correcting: add work done by evolving gas potential (dPhi/dt term) ---
         W_gas = 0 | units.J  # work done by the gas
         if (getattr(self, "gas_code", None) is not None and 
             self._gas_tracker is not None ):
@@ -516,18 +518,18 @@ class DcafSystem:
                 # add only to the gas-evolution budget
                 # (total energy itself is still T + U_self + U_bg)
             W_gas = self._gas_tracker.retrieve_stored_energy()
-            self._energy_components[3] = W_gas
             self._energy_budgets[2] += W_gas
+            #self._energy_components[3] = self.__energy_budgets[2]
+            self._total_energy[1] += W_gas
+            Etot += W_gas
 
-        #current total energy
-        Etot = Tstars + Ustars_self + U_stars_gas + W_gas
 
         if first_check:
             # initial energy: we start with zero difference
-            self._total_energy[0] = Etot
+            self._total_energy[0] = Etot 
             self._total_energy[1] = Etot
 
-        self._total_energy[0] = self._total_energy[1]
+        self._total_energy[0] = self._total_energy[1] 
         self._total_energy[1] = Etot
 
         # numerical errors 
@@ -643,6 +645,7 @@ class GasEnergyTracker:
         self.model_time = 0 | units.s   # Bridge reads this
         self.W_gas = 0 | units.J
         self._last_sum = None
+        self._logfile = open('gas_energy_dbg.log','a')
     def get_gravity_at_point(self, *args, **kwargs):
         zero = 0 | units.ms**2
         return zero, zero, zero
@@ -670,6 +673,7 @@ class GasEnergyTracker:
             self._last_sum = sum_now
 
         self.model_time = t_next
+        self._logfile.write(f'{t_next}   {self.W_gas}')
 
     def retrieve_stored_energy(self):
         wout = self.W_gas
