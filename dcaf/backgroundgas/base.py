@@ -101,6 +101,7 @@ class BackgroundPotential:
             except:
                 vals.append(np.Nan)
         self.logfile.write(' '.join(f'{x:.6g}' for x in vals) + '\n')
+        self.logfile.flush()
 
 
     def stop(self):
