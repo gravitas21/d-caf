@@ -156,6 +156,161 @@ class PlummerSphere(BackgroundPotential):
 
         return term1 + term2
 
+
+class TabulatedPlummerSphere(PlummerSphere):
+    """
+    Plummer background potential where (mtot, rscale) are read from a time table.
+
+    Expected table columns (floats) in fixed units:
+        t   [Myr],  M [MSun],  a [pc]
+
+    Default format: CSV with a header, e.g.
+        t_myr,M_msun,a_pc
+        0.0,1.0e5,1.0
+        0.5,9.0e4,1.1
+        1.0,7.5e4,1.3
+
+    Notes
+    -----
+    - Interpolation is linear in time.
+    - If clamp=True (default): values are clamped to the first/last row outside the range.
+      If clamp=False: out-of-range times raise ValueError.
+    - Potential time-derivative uses piecewise-constant slopes from the bracketing interval.
+    """
+
+    def __init__(
+        self,
+        mtot,
+        rscale,
+        table_path,
+        alpha_vir 1.0,
+        clamp = True,
+        delimiter = ",",
+        has_header = True,
+        ):
+        # Call parent but disable functional evolution parameters (mdot etc.)
+        super().__init__(
+            mtot, rscale,
+            alpha_vir =float(alpha_vir),
+            mdot = 0.0 | (units.MSun / units.Myr),
+            t0 = 0 | units.Myr,
+            t_ge = 0 | units.Myr,
+            t_col = 0 | units.Myr,
+            t_exp = 0 | units.Myr,
+        )
+
+        self.table_path = table_path
+        self.clamp = bool(clamp)
+
+        if has_header:
+            tab = np.genfromtxt(table_path, delimiter=delimiter, names=True)
+            cols = tab.dtype.names
+            if (cols is None) or (len(cols) < 3):
+                raise ValueError("TabulatedPlummerSphere: table must have at least 3 columns")
+            t = np.array(tab[cols[0]], dtype=float)
+            M = np.array(tab[cols[1]], dtype=float)
+            a = np.array(tab[cols[2]], dtype=float)
+        else:
+            arr = np.loadtxt(table_path, delimiter=delimiter)
+            if arr.ndim != 2 or arr.shape[1] < 3:
+                raise ValueError("TabulatedPlummerSphere: table must have shape (N,>=3)")
+            t, M, a = arr[:, 0].astype(float), arr[:, 1].astype(float), arr[:, 2].astype(float)
+
+        if t.size < 2:
+            raise ValueError("TabulatedPlummerSphere: table needs at least 2 rows")
+
+        if np.any(~np.isfinite(t)) or np.any(~np.isfinite(M)) or np.any(~np.isfinite(a)):
+            raise ValueError("TabulatedPlummerSphere: table contains non-finite values")
+
+        if np.any(np.diff(t) <= 0):
+            raise ValueError("TabulatedPlummerSphere: time column must be strictly increasing")
+
+        self._t_tab = t          # Myr (float)
+        self._M_tab = M          # MSun (float)
+        self._a_tab = a          # pc (float)
+
+        # Initialise to t=0 (or clamp/raise based on table)
+        self.evolve_model(self.model_time)
+
+    def _bracket_index(self, t_myr: float):
+        """
+        Return i such that t_tab[i] <= t < t_tab[i+1].
+        Assumes t is within [t0, tN]. Caller handles clamping/out-of-range.
+        """
+        i = np.searchsorted(self._t_tab, t_myr, side="right") - 1
+        if i < 0:
+            i = 0
+        if i >= self._t_tab.size - 1:
+            i = self._t_tab.size - 2
+        return i
+
+    def _interp_params(self, t_myr: float):
+        # handle out-of-range
+        if t_myr <= self._t_tab[0]:
+            if not self.clamp and (t_myr < self._t_tab[0]):
+                raise ValueError("TabulatedPlummerSphere: time below table range")
+            return self._M_tab[0], self._a_tab[0]
+        if t_myr >= self._t_tab[-1]:
+            if not self.clamp and (t_myr > self._t_tab[-1]):
+                raise ValueError("TabulatedPlummerSphere: time above table range")
+            return self._M_tab[-1], self._a_tab[-1]
+
+        M = np.interp(t_myr, self._t_tab, self._M_tab)
+        a = np.interp(t_myr, self._t_tab, self._a_tab)
+        return M, a
+
+    def _slopes_at_time(self, t_myr: float):
+        """
+        Piecewise-constant slopes (dM/dt, da/dt) from the bracketing interval.
+        If clamped outside range: slopes are 0.
+        """
+        if t_myr <= self._t_tab[0]:
+            if not self.clamp and (t_myr < self._t_tab[0]):
+                raise ValueError("TabulatedPlummerSphere: time below table range")
+            return 0.0, 0.0
+        if t_myr >= self._t_tab[-1]:
+            if not self.clamp and (t_myr > self._t_tab[-1]):
+                raise ValueError("TabulatedPlummerSphere: time above table range")
+            return 0.0, 0.0
+
+        i = self._bracket_index(t_myr)
+        dt = self._t_tab[i+1] - self._t_tab[i]
+        dMdt = (self._M_tab[i+1] - self._M_tab[i]) / dt
+        dadt = (self._a_tab[i+1] - self._a_tab[i]) / dt
+        return dMdt, dadt
+
+    def evolve_model(self, tend):
+        # Set mtot and rscale from the table at time tend
+        t_myr = tend.value_in(units.Myr)
+        M, a = self._interp_params(t_myr)
+
+        self.mtot = M | units.MSun
+        self.rscale = a | units.pc
+
+        self.model_time = tend
+        return
+
+    def get_potential_derivative_at_point(self, x, y, z):
+        """
+        dPhi/dt at point (x,y,z) for a time-evolving Plummer with tabulated M(t), a(t).
+
+        Phi = -G M / sqrt(r^2 + a^2)
+        dPhi/dt = -G * [ Mdot / R  -  M * a * adot / R^3 ]
+               = -G*Mdot/R + G*M*a*adot/R^3
+        """
+        r2 = x**2 + y**2 + z**2
+        R  = (r2 + self.rscale**2).sqrt()
+
+        t_myr = self.model_time.value_in(units.Myr)
+        dMdt, dadt = self._slopes_at_time(t_myr)
+
+        Mdot = (dMdt | units.MSun) / units.Myr
+        adot = (dadt | units.pc) / units.Myr
+
+        term1 = -G * Mdot / R
+        term2 =  G * self.mtot * self.rscale * adot / (R**3)
+        return term1 + term2
+
 def test_plummer_evolution(
     mtot = 1e5 | units.MSun,
     rscale = 1 | units.pc,
