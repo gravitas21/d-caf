@@ -111,6 +111,7 @@ class PlummerSphere(BackgroundPotential):
             # collapse phase
             if tcol > zero:
                 fac =  1.0 - (t - t0)/tcol 
+                fac = max(fac, 0.0)
                 self.rscale = self.rscale_0 * fac**0.5
         else:
             # expansion phase
@@ -183,7 +184,7 @@ class TabulatedPlummerSphere(PlummerSphere):
         mtot,
         rscale,
         table_path,
-        alpha_vir 1.0,
+        alpha_vir = 1.0,
         clamp = True,
         delimiter = ",",
         has_header = True,
@@ -201,6 +202,7 @@ class TabulatedPlummerSphere(PlummerSphere):
 
         self.table_path = table_path
         self.clamp = bool(clamp)
+        self.t0_table = None
 
         if has_header:
             tab = np.genfromtxt(table_path, delimiter=delimiter, names=True)
@@ -208,6 +210,7 @@ class TabulatedPlummerSphere(PlummerSphere):
             if (cols is None) or (len(cols) < 3):
                 raise ValueError("TabulatedPlummerSphere: table must have at least 3 columns")
             t = np.array(tab[cols[0]], dtype=float)
+
             M = np.array(tab[cols[1]], dtype=float)
             a = np.array(tab[cols[2]], dtype=float)
         else:
@@ -224,6 +227,10 @@ class TabulatedPlummerSphere(PlummerSphere):
 
         if np.any(np.diff(t) <= 0):
             raise ValueError("TabulatedPlummerSphere: time column must be strictly increasing")
+
+        t0_table = t[0]
+        t = t - t0_table
+        self.t0_table = float(t0_table)
 
         self._t_tab = t          # Myr (float)
         self._M_tab = M          # MSun (float)
