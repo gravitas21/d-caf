@@ -90,6 +90,19 @@ class StarFormationFramework :
     def get_next_formation_time(self):
         return self.__next_formation_time
 
+    def get_last_formation_time(self):
+        ## useful for restart
+        next_t = self.get_next_formation_time()
+
+        if next_t is None:
+            return None
+
+        if len(self.formation_times) == 0:
+            return next_t
+
+        return self.formation_times[-1]
+
+
     def extract_next_event(self):
         """
         Retrieve next scheduled stars and setup the next formation event.

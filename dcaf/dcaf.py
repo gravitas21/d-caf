@@ -4,6 +4,9 @@ D-CAF: Dynamic Cluster Assembly Framework
 from __future__ import annotations
 import os
 import numpy as np
+import glob
+import re
+import sys
 
 from amuse.datamodel import Particles
 from amuse.units.constants import G
@@ -22,6 +25,8 @@ from dcaf.utilities.parameters import get_default_configuration
 from dcaf.utilities.logger import setup_logger
 from dcaf.utilities.config import load_config
 
+from dcaf.io.restart import get_resume_state
+
 #cfg = load_config("config.yaml")
 # from dcaf.framework import StarFormationFramework  
 
@@ -36,24 +41,44 @@ class DcafSystem:
         output_folder = "./dcaf_output/",
         log_level = 'debug',
         stars_per_worker = None,
-        workers_step = 5
+        workers_step = 5,
+        resume = False
     ):
+        base_output_folder = output_folder.rstrip("/")
+        if base_output_folder == "":
+            base_output_folder = "."
+
+        self.resume = resume
+        if self.resume:
+            seg = get_next_output_segment(base_output_folder)
+        else:
+            seg = 0
+
+        if seg == 0:
+            self.output_folder = base_output_folder
+        else:
+            self.output_folder = f"{base_output_folder}_{seg}"
+
         self.config = config or get_default_configuration()
         self.workers_step = workers_step # how many workers to increase
 
         self.framework = framework
 
         self.dt_out = 0.5 | units.Myr   # TODO: move to config
-        self.output_folder = output_folder
         self.snapshot_basename = "stars_"
         self.__current_snapshot = 0
-        self.logger = setup_logger(self.output_folder,log_level)
         self.stars_per_worker = stars_per_worker
         self._current_workers = None
 
+        # I will move this inside dcaf_output in the future..
         if self.framework.background_gas:
             self.gas_code = self.framework.background_gas
+            if seg == 0:
+                self.gas_code.logfilename = "background_gas.dat"
+            else:
+                self.gas_code.logfilename = f"background_gas_{seg}.dat"
 
+        self.logger = setup_logger(self.output_folder,log_level)
         # Converter: use provided one or derive from framework target stars
         stars0 = framework.target_stars
         if len(stars0) < 2:
@@ -116,105 +141,146 @@ class DcafSystem:
         with self.logger.timing('[UPDATING STARS] ********************'):
             self._formed_stars = self.petar_code.particles.copy()
             self._formed_stars.collection_attributes.code_time = self.petar_code.model_time
-
     def initialize_system(self):
-        """Instantiate PeTar and, if present, Bridge. Also, add initial stars."""
+        """Instantiate PeTar and, if present, Bridge. Also add initial stars,
+        or resume from the latest saved snapshot if self.resume is True.
+        """
         if not PETAR_INSTALLED:
             print('PeTar not installed. System not initialized')
             return
 
         with self.logger.timing('[DCAF] Initializing system *********************'):
-            # lets validate the framework before anything:
-            dt_soft = self.config["petar"].dt_soft  #should be nbody
+            # validate dt_soft
+            dt_soft = self.config["petar"].dt_soft
             if dt_soft is None:
-                raise ValueError('dt_soft must be provided in this '
+                raise ValueError('dt_soft must be provided in this implemenation')
 
-                            'implemenation')
-            if not (dt_soft.unit == nbody_system.time and 
-                    np.isclose(
-                        np.log2(dt_soft.value_in(nbody_system.time)), 
-                        round(np.log2(dt_soft.value_in(nbody_system.time)
-                    )), atol=1e-12)):
+            if not (
+                dt_soft.unit == nbody_system.time and
+                np.isclose(
+                    np.log2(dt_soft.value_in(nbody_system.time)),
+                    round(np.log2(dt_soft.value_in(nbody_system.time))),
+                    atol=1e-12
+                )
+            ):
                 raise ValueError(
                     "[DCAF] dt_soft must be in nbody_system.time units and an "
-                    " exact power of 2.")
+                    "exact power of 2."
+                )
 
             self.dt_soft_eff = self.converter.to_si(dt_soft)
-            self._validate_formation_schedule(dt_soft)
 
-            #lets have the first set of stars from the star formation framework,
-            # to set the initial time and initial stars:
-            tnext = self.framework.get_next_formation_time()
-            if tnext is None:
-                raise Exception('No formation events in framework')
-            tnext = self._ceil_to_block(tnext)
-            newstars = self.framework.form_stars(Particles())
+            # fresh runs need a valid formation schedule
+            if not self.resume:
+                self._validate_formation_schedule(dt_soft)
 
-            #TODO: For gas implementation, make sure here that the gas evolve up to
-            # this point
             with self.logger.timing('Initializing PeTar'):
                 self._setup_petar()
-
-            #add the initial stars
-            self.model_time = tnext #for logging
-            self._add_new_stars(newstars)
 
             # Make sure output directory exists
             os.makedirs(self.output_folder, exist_ok=True)
 
-            # Initialize time
+            # ------------------------------------------------------------
+            # Resume branch
+            # ------------------------------------------------------------
+            if self.resume:
+                state = get_resume_state(framework=self.framework)
 
+                stars = state["stars"]
+                self.model_time = state["model_time"]
+                snapshot_index = state["snapshot_index"]
+
+                self.logger.info(
+                    f'[DCAF] Resuming from snapshot {snapshot_index:03d} '
+                    f'at {self.model_time.in_(units.Myr)}'
+                )
+
+                self.petar_code.particles.add_particles(stars.copy())
+
+                self._formed_stars = stars.copy()
+                self._formed_stars.collection_attributes.code_time = self.model_time
+
+                self._disable_future_formation()
+
+                self.__current_snapshot = snapshot_index + 1
+
+            # ------------------------------------------------------------
+            # Fresh initialization branch
+            # ------------------------------------------------------------
+            else:
+                # get first formation event
+                tnext = self.framework.get_next_formation_time()
+                if tnext is None:
+                    raise Exception('No formation events in framework')
+
+                tnext = self._ceil_to_block(tnext)
+                newstars = self.framework.form_stars(Particles())
+
+                self.model_time = tnext
+                self._add_new_stars(newstars)
+
+            # ------------------------------------------------------------
+            # Common tail
+            # ------------------------------------------------------------
             self.dt_soft_eff = self.petar_code.parameters.dt_soft
-            self.logger.info('[DCAF] effective dt_soft changed from'
-                    f' {self.config["petar"].dt_soft}'
-                    f' {self.converter.to_nbody(self.dt_soft_eff)}'
-                    f' ({self.dt_soft_eff.in_(units.Myr)})'
-                    )
-            if abs(self.converter.to_nbody(self.dt_soft_eff)
-                - self.config["petar"].dt_soft) > 1e-15 |nbody_system.time:
-                raise Exception (
+            self.logger.info(
+                '[DCAF] effective dt_soft changed from'
+                f' {self.config["petar"].dt_soft}'
+                f' {self.converter.to_nbody(self.dt_soft_eff)}'
+                f' ({self.dt_soft_eff.in_(units.Myr)})'
+            )
+
+            if abs(
+                self.converter.to_nbody(self.dt_soft_eff)
+                - self.config["petar"].dt_soft
+            ) > 1e-15 | nbody_system.time:
+                raise Exception(
                     '[DCAF] effective dt_soft changed from'
                     f' {self.config["petar"].dt_soft}'
-                    #f'{self.dt_soft_eff.in_(units.Myr)}'
                     f' {self.converter.to_nbody(self.dt_soft_eff)}'
                     ' This may happened if dt_soft was not provided in nbody'
                     ' units'
-                    )
+                )
 
-            self.model_time = tnext
             self.petar_code.parameters.begin_time = self.model_time
 
-            #also advance background gas
-            # this may be taken care by bridge. TODO: check after methods are ready
+            # also advance background gas
             if self.gas_code:
-                self.logger.info('[DCAF] [BGAS] evolved to' 
-                                 f'{self.model_time.in_(units.Myr)} ' )
+                self.logger.info(
+                    '[DCAF] [BGAS] evolved to '
+                    f'{self.model_time.in_(units.Myr)}'
+                )
                 self.gas_code.evolve_model(self.model_time)
 
-            #initialize bridge
+            # initialize bridge
             if self.gas_code is not None:
-                n_timestep = 1 # every how many blocktimesteps should we do a kick?
+                n_timestep = 1
                 self._setup_bridge()
+                self.bridge_code.time = self.model_time
 
-                self.logger.info('[DCAF] [BRIDGE] setup with effective time-step: '
-                                 f'{(self.dt_soft_eff * n_timestep).in_(units.Myr)}')
-                # In this framework we only need gas to star interaction
-                self.bridge_code.add_system(self.petar_code,(self.gas_code,),False)
-                # is this line needed?
+                self.logger.info(
+                    '[DCAF] [BRIDGE] setup with effective time-step: '
+                    f'{(self.dt_soft_eff * n_timestep).in_(units.Myr)}'
+                )
+
+                self.bridge_code.add_system(self.petar_code, (self.gas_code,), False)
                 self.bridge_code.add_system(self.gas_code,)
 
-                if self.track_background_gas_energy :
+                if self.track_background_gas_energy:
                     self._gas_tracker = GasEnergyTracker(self)
-                    self.bridge_code.add_system( self._gas_tracker )
+                    self.bridge_code.add_system(self._gas_tracker)
 
                 self.code = self.bridge_code
             else:
-                self.logger.info('[DCAF][BRIDGE] no BGAS found. Evolving only with '
-                    'PeTar')
+                self.logger.info(
+                    '[DCAF][BRIDGE] no BGAS found. Evolving only with PeTar'
+                )
                 self.bridge_code = None
                 self.code = self.petar_code
-        #write initial output
-        self.write_output()
+
+        # only write initial output for fresh runs
+        if not self.resume:
+            self.write_output()
 
     # --- setup helpers -----------------------------------------------------
     def _setup_petar(self,nworkers = None):
@@ -290,6 +356,7 @@ class DcafSystem:
             if self.track_background_gas_energy:
                 self.bridge_code.add_system( self._gas_tracker )
             self.code = self.bridge_code
+            self.code.model_time = self.model_time
             self.logger.info("[DCAF][SCALING] Bridge rebuilt after PeTar rescale")
         else:
             self.bridge_code = None
@@ -633,6 +700,41 @@ class DcafSystem:
                 "setting the dt_tolerance > dt_soft "
             )
 
+    def _disable_future_formation(self):
+        self.framework.formation_sequence = []
+        self.framework.formation_times = []
+        self.framework._StarFormationFramework__next_formation_time = None
+        self.framework._StarFormationFramework__next_stars = None
+
+def get_next_output_segment(base="./dcaf_output"):
+    """
+    Returns:
+        0 for first run  -> ./dcaf_output
+        1 for first resume -> ./dcaf_output_1
+        2 for second resume -> ./dcaf_output_2
+        ...
+    """
+    parent = os.path.dirname(base)
+    if parent == "":
+        parent = "."
+    stem = os.path.basename(base.rstrip("/"))
+
+    candidates = glob.glob(os.path.join(parent, stem + "*"))
+
+    segs = []
+    for path in candidates:
+        name = os.path.basename(path.rstrip("/"))
+        if name == stem:
+            segs.append(0)
+            continue
+        m = re.fullmatch(rf"{re.escape(stem)}_(\d+)", name)
+        if m:
+            segs.append(int(m.group(1)))
+
+    if len(segs) == 0:
+        return 0
+
+    return max(segs) + 1
 
 class GasEnergyTracker:
     """
