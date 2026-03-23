@@ -50,6 +50,41 @@ def find_latest_snapshot(output_folder="dcaf_output", snapshot_basename="stars_"
 
     return snapshots[-1]
 
+def find_latest_output_folder(base_output_folder="dcaf_output"):
+    parent = os.path.dirname(base_output_folder.rstrip("/"))
+    if parent == "":
+        parent = "."
+    stem = os.path.basename(base_output_folder.rstrip("/"))
+
+    candidates = glob.glob(os.path.join(parent, stem + "*"))
+
+    best_seg = None
+    best_path = None
+
+    for path in candidates:
+        name = os.path.basename(path.rstrip("/"))
+        if name == stem:
+            seg = 0
+        else:
+            m = re.fullmatch(rf"{re.escape(stem)}_(\d+)", name)
+            if m is None:
+                continue
+            seg = int(m.group(1))
+
+        if not os.path.isdir(path):
+            continue
+
+        if best_seg is None or seg > best_seg:
+            best_seg = seg
+            best_path = path
+
+    if best_path is None:
+        raise FileNotFoundError(
+            f"No output folders found matching '{base_output_folder}'"
+        )
+
+    return best_path
+
 
 def load_snapshot(path):
     stars = read_set_from_file(path, format="amuse")

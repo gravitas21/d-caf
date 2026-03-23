@@ -185,6 +185,7 @@ class DcafSystem:
             # ------------------------------------------------------------
             if self.resume:
                 state = get_resume_state(framework=self.framework)
+                self.logger.info(f"[DCAF] Resume source folder: {state['output_folder']}")
 
                 stars = state["stars"]
                 self.model_time = state["model_time"]
