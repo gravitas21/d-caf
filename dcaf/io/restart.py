@@ -1,8 +1,4 @@
-from dcaf.io.output import (
-    load_latest_snapshot,
-    load_snapshot_by_index,
-    find_latest_output_folder,
-)
+from dcaf.io.output import load_latest_snapshot, load_snapshot_by_index
 
 
 def formation_finished_at_time(model_time, framework):
@@ -26,24 +22,23 @@ def validate_resume_after_formation(model_time, framework):
 
 def get_resume_state(snapshot_index=None,
                      framework=None,
-                     output_folder="dcaf_output",
+                     source_folder="dcaf_output",
                      snapshot_basename="stars_"):
 
-    resume_folder = find_latest_output_folder(output_folder)
 
     if snapshot_index is None:
         state = load_latest_snapshot(
-            output_folder=resume_folder,
+            source_folder = source_folder,
             snapshot_basename=snapshot_basename,
         )
     else:
         state = load_snapshot_by_index(
             snapshot_index,
-            output_folder=resume_folder,
+            source_folder=source_folder,
             snapshot_basename=snapshot_basename,
         )
 
-    state["output_folder"] = resume_folder
+    state["source_folder"] = source_folder
 
     if framework is not None:
         validate_resume_after_formation(state["model_time"], framework)

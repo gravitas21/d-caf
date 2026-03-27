@@ -5,9 +5,9 @@ import re
 from amuse.io import read_set_from_file
 
 
-def snapshot_filename(snapshot_index, output_folder="dcaf_output", snapshot_basename="stars_"):
+def snapshot_filename(snapshot_index, source_folder="dcaf_output", snapshot_basename="stars_"):
     filename = f"{snapshot_basename}{snapshot_index:03d}.amuse"
-    return os.path.join(output_folder, filename)
+    return os.path.join(source_folder, filename)
 
 
 def snapshot_index_from_path(path, snapshot_basename="stars_"):
@@ -21,8 +21,8 @@ def snapshot_index_from_path(path, snapshot_basename="stars_"):
     return int(m.group(1))
 
 
-def find_snapshot_files(output_folder="dcaf_output", snapshot_basename="stars_"):
-    pattern = os.path.join(output_folder, f"{snapshot_basename}*.amuse")
+def find_snapshot_files(source_folder="dcaf_output", snapshot_basename="stars_"):
+    pattern = os.path.join(source_folder, f"{snapshot_basename}*.amuse")
     files = glob.glob(pattern)
 
     snapshots = []
@@ -37,15 +37,15 @@ def find_snapshot_files(output_folder="dcaf_output", snapshot_basename="stars_")
     return snapshots
 
 
-def find_latest_snapshot(output_folder="dcaf_output", snapshot_basename="stars_"):
+def find_latest_snapshot(source_folder="dcaf_output", snapshot_basename="stars_"):
     snapshots = find_snapshot_files(
-        output_folder=output_folder,
+        source_folder=source_folder,
         snapshot_basename=snapshot_basename,
     )
 
     if len(snapshots) == 0:
         raise FileNotFoundError(
-            f"No snapshots found in '{output_folder}' with basename '{snapshot_basename}'"
+            f"No snapshots found in '{source_folder}' with basename '{snapshot_basename}'"
         )
 
     return snapshots[-1]
@@ -104,10 +104,10 @@ def load_snapshot(path):
     }
 
 
-def load_snapshot_by_index(snapshot_index, output_folder="dcaf_output", snapshot_basename="stars_"):
+def load_snapshot_by_index(snapshot_index, source_folder="dcaf_output", snapshot_basename="stars_"):
     path = snapshot_filename(
         snapshot_index,
-        output_folder=output_folder,
+        source_folder=source_folder,
         snapshot_basename=snapshot_basename,
     )
     state = load_snapshot(path)
@@ -115,9 +115,9 @@ def load_snapshot_by_index(snapshot_index, output_folder="dcaf_output", snapshot
     return state
 
 
-def load_latest_snapshot(output_folder="dcaf_output", snapshot_basename="stars_"):
+def load_latest_snapshot(source_folder="dcaf_output", snapshot_basename="stars_"):
     snapshot_index, path = find_latest_snapshot(
-        output_folder=output_folder,
+        source_folder=source_folder,
         snapshot_basename=snapshot_basename,
     )
 

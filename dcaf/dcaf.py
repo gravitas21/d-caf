@@ -59,6 +59,19 @@ class DcafSystem:
         else:
             self.output_folder = f"{base_output_folder}_{seg}"
 
+        #where to get the old data
+        self.resume_source_folder = None
+        if self.resume:
+            if seg == 0 :
+                raise FileNotFoundError(
+                    f"No previous data to resume in '{base_output_folder}'."
+                )
+
+            if seg == 1 :
+                self.resume_source_folder = base_output_folder 
+            else:
+                self.resume_source_folder = f"{base_output_folder}_{seg-1}"
+
         self.config = config or get_default_configuration()
         self.workers_step = workers_step # how many workers to increase
 
@@ -184,8 +197,13 @@ class DcafSystem:
             # Resume branch
             # ------------------------------------------------------------
             if self.resume:
-                state = get_resume_state(framework=self.framework)
-                self.logger.info(f"[DCAF] Resume source folder: {state['output_folder']}")
+                state = get_resume_state(
+                    framework=self.framework,
+                    source_folder=self.resume_source_folder,
+                    snapshot_basename=self.snapshot_basename,
+                )
+
+                self.logger.info(f"[DCAF] Resume source folder: {state['source_folder']}")
 
                 stars = state["stars"]
                 self.model_time = state["model_time"]
