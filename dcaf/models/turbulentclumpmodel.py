@@ -223,12 +223,16 @@ def make_turbulent_core_cluster(
 # following the current sfe_ff. All stars at once should be set with an 
 # sfe_ff == infty
 
-def make_kroupa_masses(Mstars, mmax = 100 | units.MSun):
+def make_kroupa_masses(
+    Mstars,
+    mmin=0.01 | units.MSun,
+    mmax=100 | units.MSun,
+):
     """Draw Kroupa IMF masses until the sum reaches ~Mstars, then trim the last draw."""
     mtot = 0 | units.MSun
     out = []
     while mtot < Mstars:
-        m = new_kroupa_mass_distribution(1, mass_max=mmax)[0]
+        m = new_kroupa_mass_distribution(1, mass_min=mmin, mass_max=mmax)[0]
         out.append(m.value_in(units.MSun))
         mtot += m
     masses = (np.array(out) | units.MSun)
@@ -338,4 +342,3 @@ def test_sigma_slope_matches():
     slope_measured = coeffs[0]
     slope_theory = (2.0 - k_rho) / 2.0
     assert np.isclose(slope_measured, slope_theory, atol=0.2)
-

@@ -6,6 +6,9 @@ Gas is not explicitly modelled but emulated through ad-hoc evolving background p
 The framework aims to mimic full star cluster formation simulations while making explicit assumptions about gas behaviour and star formation.
 This enables exploration of the consequences of such assumptions on stellar dynamics, stellar populations, and the long-term evolution of clusters.
 
+# Install
+see [doc/Install.md](doc/Install.md)
+
 # Code organization
 
 Here how the repository is currently organized. Future changes should respect this structure for simplicity:

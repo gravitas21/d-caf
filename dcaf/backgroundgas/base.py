@@ -40,6 +40,12 @@ class BackgroundPotential:
         """
         raise NotImplementedError
 
+    def get_potential_derivative_at_point(self, x, y, z):
+        """
+        Return dPhi/dt at (x, y, z).
+        """
+        raise NotImplementedError
+
     def _ensure_logfile(self):
         #Open logfile if needed. If the file already exists, assume the header
         #was written in a previous session and keep __first_output = False.
