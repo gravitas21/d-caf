@@ -50,19 +50,22 @@ def find_latest_snapshot(source_folder="dcaf_output", snapshot_basename="stars_"
 
     return snapshots[-1]
 
-def find_latest_output_folder(base_output_folder="dcaf_output"):
-    parent = os.path.dirname(base_output_folder.rstrip("/"))
+def get_output_folders(base_output_folder="dcaf_output"):
+    base = base_output_folder.rstrip("/")
+    parent = os.path.dirname(base)
     if parent == "":
         parent = "."
-    stem = os.path.basename(base_output_folder.rstrip("/"))
+    stem = os.path.basename(base)
 
-    candidates = glob.glob(os.path.join(parent, stem + "*"))
+    folders = []
+    pattern = os.path.join(parent, stem + "*")
 
-    best_seg = None
-    best_path = None
+    for path in glob.glob(pattern):
+        if not os.path.isdir(path):
+            continue
 
-    for path in candidates:
         name = os.path.basename(path.rstrip("/"))
+
         if name == stem:
             seg = 0
         else:
@@ -71,19 +74,24 @@ def find_latest_output_folder(base_output_folder="dcaf_output"):
                 continue
             seg = int(m.group(1))
 
-        if not os.path.isdir(path):
-            continue
+        folders.append((seg, path))
 
-        if best_seg is None or seg > best_seg:
-            best_seg = seg
-            best_path = path
+    folders.sort(key=lambda x: x[0])
 
-    if best_path is None:
+    if len(folders) == 0:
         raise FileNotFoundError(
             f"No output folders found matching '{base_output_folder}'"
         )
 
-    return best_path
+    for expected_seg, (seg, path) in enumerate(folders):
+        if seg != expected_seg:
+            raise FileNotFoundError(
+                "Non-continuous output folders found for "
+                f"'{base_output_folder}': expected segment {expected_seg}, "
+                f"found '{path}'."
+            )
+
+    return [path for seg, path in folders]
 
 
 def load_snapshot(path):

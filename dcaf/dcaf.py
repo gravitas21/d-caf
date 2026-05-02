@@ -3,10 +3,8 @@ D-CAF: Dynamic Cluster Assembly Framework
 """
 from __future__ import annotations
 import os
+import shutil
 import numpy as np
-import glob
-import re
-import sys
 
 from amuse.datamodel import Particles
 from amuse.units.constants import G
@@ -23,11 +21,10 @@ from amuse.io import write_set_to_file
 
 from dcaf.utilities.parameters import get_default_configuration
 from dcaf.utilities.logger import setup_logger
-from dcaf.utilities.config import load_config
 
 from dcaf.io.restart import get_resume_state
+from dcaf.io.output import get_output_folders, find_snapshot_files
 
-#cfg = load_config("config.yaml")
 # from dcaf.framework import StarFormationFramework  
 
 class DcafSystem:
@@ -48,29 +45,48 @@ class DcafSystem:
         if base_output_folder == "":
             base_output_folder = "."
 
+        self.snapshot_basename = "stars_"
+        reuse_empty_output_folder = False
         self.resume = resume
         if self.resume:
-            seg = get_next_output_segment(base_output_folder)
+            folders = get_output_folders(base_output_folder)
+            latest_folder = folders[-1]
+            latest_snapshots = find_snapshot_files(
+                source_folder=latest_folder,
+                snapshot_basename=self.snapshot_basename,
+            )
+
+            if len(latest_snapshots) > 0:
+                seg = len(folders)
+                self.resume_source_folder = latest_folder
+                self.output_folder = f"{base_output_folder}_{seg}"
+            else:
+                if len(folders) < 2:
+                    raise FileNotFoundError(
+                        f"No previous data to resume in '{base_output_folder}'."
+                    )
+                previous_folder = folders[-2]
+                previous_snapshots = find_snapshot_files(
+                    source_folder=previous_folder,
+                    snapshot_basename=self.snapshot_basename,
+                )
+                if len(previous_snapshots) == 0:
+                    raise FileNotFoundError(
+                        "Found two consecutive empty output folders: "
+                        f"'{previous_folder}' and '{latest_folder}'."
+                        " Please check, and remove folders with no snapshots."
+                    )
+                seg = len(folders) - 1
+                self.resume_source_folder = previous_folder
+                self.output_folder = latest_folder
+                reuse_empty_output_folder = True
         else:
             seg = 0
-
-        if seg == 0:
             self.output_folder = base_output_folder
-        else:
-            self.output_folder = f"{base_output_folder}_{seg}"
 
         #where to get the old data
-        self.resume_source_folder = None
-        if self.resume:
-            if seg == 0 :
-                raise FileNotFoundError(
-                    f"No previous data to resume in '{base_output_folder}'."
-                )
-
-            if seg == 1 :
-                self.resume_source_folder = base_output_folder 
-            else:
-                self.resume_source_folder = f"{base_output_folder}_{seg-1}"
+        if not self.resume:
+            self.resume_source_folder = None
 
         self.config = config or get_default_configuration()
         self.workers_step = workers_step # how many workers to increase
@@ -78,7 +94,6 @@ class DcafSystem:
         self.framework = framework
 
         self.dt_out = 0.5 | units.Myr   # TODO: move to config
-        self.snapshot_basename = "stars_"
         self.__current_snapshot = 0
         self.stars_per_worker = stars_per_worker
         self._current_workers = None
@@ -90,6 +105,12 @@ class DcafSystem:
                 self.gas_code.logfilename = "background_gas.dat"
             else:
                 self.gas_code.logfilename = f"background_gas_{seg}.dat"
+
+        if reuse_empty_output_folder:
+            log_file = os.path.join(self.output_folder, "dcaf.log")
+            failed_log_file = os.path.join(self.output_folder, "dcaf.log.failed")
+            if os.path.exists(log_file):
+                shutil.copyfile(log_file, failed_log_file)
 
         self.logger = setup_logger(self.output_folder,log_level)
         # Converter: use provided one or derive from framework target stars
@@ -724,36 +745,6 @@ class DcafSystem:
         self.framework.formation_times = []
         self.framework._StarFormationFramework__next_formation_time = None
         self.framework._StarFormationFramework__next_stars = None
-
-def get_next_output_segment(base="./dcaf_output"):
-    """
-    Returns:
-        0 for first run  -> ./dcaf_output
-        1 for first resume -> ./dcaf_output_1
-        2 for second resume -> ./dcaf_output_2
-        ...
-    """
-    parent = os.path.dirname(base)
-    if parent == "":
-        parent = "."
-    stem = os.path.basename(base.rstrip("/"))
-
-    candidates = glob.glob(os.path.join(parent, stem + "*"))
-
-    segs = []
-    for path in candidates:
-        name = os.path.basename(path.rstrip("/"))
-        if name == stem:
-            segs.append(0)
-            continue
-        m = re.fullmatch(rf"{re.escape(stem)}_(\d+)", name)
-        if m:
-            segs.append(int(m.group(1)))
-
-    if len(segs) == 0:
-        return 0
-
-    return max(segs) + 1
 
 class GasEnergyTracker:
     """
