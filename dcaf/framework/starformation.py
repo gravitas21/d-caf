@@ -116,92 +116,106 @@ class StarFormationFramework :
 
         return new_stars
 
-    def schedule_formation(self, t0=0 | units.Myr ):
+    def schedule_formation(self, t0=0 | units.Myr):
         """
-        Build a schedule of star-formation in batches. The sequence of formation
-        follows the order of stars. If another sequence is needed, resort the
-        positions of target_stars
+        Build a schedule of star formation in batches.
 
-
-        Returns
-        -------
-        formation_sequence : list[Particles]
-            Each element is a Particles batch to be added at the corresponding
-            time.
-        formation_times : list (AMUSE time quantities)
-            Times to add those batches.
-
-        dt_tolerance : stars formed closer in time than this will be added
-            together.
-
-        Behaviour
-        ---------
-        - Instantaneous: if `star_formation_rate` is None, 'infty'/'inf', or non-finite (∞), add
-          all stars at `t0`.
-        - Constant: otherwise, assume a constant star formation rate (SFR). Each
-          star i forms at `t0 + (cumulative_mass_i / sfr)`, but the first event
-          batches the first two stars together at the *second* star's time
-          (`per_star_times[1]`) so the second star is not pulled earlier.
-        - Binaries should be added together (TODO)
-
+        Rules
+        -----
+        - If `system_id` exists, stars sharing the same positive `system_id`
+          are always added together.
+        - If `system_id` is missing, or `system_id <= 0`, the star is treated
+          as a singleton.
+        - Order is the order of first appearance in `target_stars`.
+        - `nstart` is a soft lower bound in number of stars: whole systems are
+          added until the first batch reaches or exceeds `nstart`.
+        - Systems whose formation times differ by less than `dt_tolerance`
+          are merged into the same formation event.
         """
         sfr = self.star_formation_rate
         stars = self.target_stars
 
         if len(stars) == 0:
-            self.formation_sequence,self.formation_times = deque([]), deque([])
+            self.formation_sequence, self.formation_times = deque([]), deque([])
             return
 
         # Instantaneous modes
-        if (sfr is None or (isinstance(sfr, str) and 
-                            sfr.lower() in {"infty", "inf"}) ):
+        if (sfr is None or
+            (isinstance(sfr, str) and sfr.lower() in {"infty", "inf"})):
             self.formation_sequence = deque([stars.copy()])
             self.formation_times = deque([t0])
             return
 
-        # Constant sfr from amuse quantity
         if not hasattr(sfr, "unit"):
             raise ValueError(
                 "SFR must be an AMUSE quantity with units of MSun/Myr"
             )
 
-        # --- Treat non-finite or non-positive SFR as instantaneous
         sfr_val = sfr.value_in(units.MSun / units.Myr)
         if not isfinite(sfr_val) or sfr_val <= 0.0:
             raise ValueError(
-                    "Invalid SFR [%S], must be positive and finite"%sfr_val)
-        # Set up the formation time of the stars
-        # The formation order is set by the position on the Particle set.
-        masses = stars.mass
-        cum_mass = masses.cumsum()
-        per_star_times = t0 + cum_mass / sfr
+                "Invalid SFR [%S], must be positive and finite" % sfr_val
+            )
 
-        if len(stars)< self.nstart:
+        if len(stars) < self.nstart:
             raise Exception('Framework must contain at least enough stars for \
-            the first batch of nstart = [%i] stars'%self.nstart)
+            the first batch of nstart = [%i] stars' % self.nstart)
 
-        # First batch: 
-        first_time = per_star_times[self.nstart - 1]
+        # Build system groups in order of first appearance.
+        raw_ids = stars.system_id if hasattr(stars, "system_id") else None
+
+        groups = {}
+        for i in range(len(stars)):
+            sid = raw_ids[i] if raw_ids is not None else -1
+            key = sid if sid > 0 else -(i + 1)   # singleton fallback
+            groups.setdefault(key, []).append(i)
+
+        ordered_keys = list(groups)
+
+        system_batches = [stars[groups[key]].copy() for key in ordered_keys]
+        system_sizes = [len(batch) for batch in system_batches]
+        system_masses = [batch.mass.sum() for batch in system_batches]
+
+        # One formation time per system.
+        cum_mass = []
+        mtot = 0 | units.MSun
+        for m in system_masses:
+            mtot += m
+            cum_mass.append(mtot)
+
+        per_system_times = [t0 + m / sfr for m in cum_mass]
+
+        # First batch: keep adding whole systems until we reach/exceed nstart stars.
         first_batch = Particles()
-        first_batch.add_particles(stars[0:self.nstart])
+        nfirst = 0
+        ifirst = 0
+
+        for i, batch in enumerate(system_batches):
+            first_batch.add_particles(batch)
+            nfirst += system_sizes[i]
+            ifirst = i
+            if nfirst >= self.nstart:
+                break
+
+        first_time = per_system_times[ifirst]
 
         formation_sequence = [first_batch]
         formation_times = [first_time]
 
-        # --- Remaining stars (indices >= self.nstart)
-        for i in range(self.nstart, len(stars)):
-            this_time = per_star_times[i]
-            # If last batch has same time, append to it
-            if ( formation_times 
-                    and abs(this_time - formation_times[-1]) < self.dt_tolerance
-                ):
-                formation_sequence[-1].add_particles(stars[i:i+1])
+        # Remaining systems: merge only if times are within dt_tolerance.
+        for i in range(ifirst + 1, len(system_batches)):
+            this_batch = system_batches[i]
+            this_time = per_system_times[i]
+
+            if (formation_times
+                    and abs(this_time - formation_times[-1]) < self.dt_tolerance):
+                formation_sequence[-1].add_particles(this_batch)
             else:
-                formation_sequence.append(stars[i:i+1].copy())
+                formation_sequence.append(this_batch.copy())
                 formation_times.append(this_time)
 
         self.formation_sequence = deque(formation_sequence)
-        self.formation_times =  deque(formation_times)
+        self.formation_times = deque(formation_times)
 
         self.__setup_next_event()
 
