@@ -21,6 +21,63 @@ from amuse.lab import Particles, units
 from amuse.units.constants import G
 
 
+def synchronize_resolved_with_unresolved(unresolved_stars, resolved_stars):
+    """
+    Move resolved components so each system matches the given unresolved COM.
+    """
+    if not hasattr(unresolved_stars, "system_id"):
+        raise AttributeError("unresolved_stars must have a system_id attribute.")
+    if not hasattr(resolved_stars, "system_id"):
+        raise AttributeError("resolved_stars must have a system_id attribute.")
+
+    updated = resolved_stars.copy()
+
+    unresolved_ids = list(unresolved_stars.system_id)
+    resolved_ids = list(updated.system_id)
+
+    for system_id in unresolved_ids:
+        unresolved_mask = [sid == system_id for sid in unresolved_ids]
+        resolved_mask = [sid == system_id for sid in resolved_ids]
+
+        unresolved_system = unresolved_stars[unresolved_mask]
+        resolved_system = updated[resolved_mask]
+
+        if len(unresolved_system) != 1:
+            raise ValueError(
+                "Each system_id must appear exactly once in unresolved_stars."
+            )
+        if len(resolved_system) == 0:
+            raise ValueError(
+                f"system_id {system_id} is present in unresolved_stars but missing in resolved_stars."
+            )
+
+        target = unresolved_system[0]
+
+        if len(resolved_system) == 1:
+            resolved_system.position = target.position
+            resolved_system.velocity = target.velocity
+            continue
+
+        old_com = resolved_system.center_of_mass()
+        old_com_velocity = resolved_system.center_of_mass_velocity()
+
+        dx = resolved_system.x - old_com.x
+        dy = resolved_system.y - old_com.y
+        dz = resolved_system.z - old_com.z
+        dvx = resolved_system.vx - old_com_velocity.x
+        dvy = resolved_system.vy - old_com_velocity.y
+        dvz = resolved_system.vz - old_com_velocity.z
+
+        resolved_system.x = target.x + dx
+        resolved_system.y = target.y + dy
+        resolved_system.z = target.z + dz
+        resolved_system.vx = target.vx + dvx
+        resolved_system.vy = target.vy + dvy
+        resolved_system.vz = target.vz + dvz
+
+    return updated
+
+
 class BinaryPopulation:
     """
     Thin class wrapper around the functional binary-building workflow.
