@@ -184,11 +184,43 @@ class BinaryPopulation:
         choice = numpy.random.choice(valid_index, p=weights)
         return mass[choice]
 
-    def get_eccentricities(self, nbinaries):
+    def get_periods(self, stars, primary_index, companion_index, **kwargs):
+        """
+        Sample binary periods for the selected systems.
+
+        Extra context can be passed through ``kwargs``. The default
+        implementation uses ``Rc`` when provided, otherwise it falls back to
+        ``self.max_radius``.
+        """
+        nbinaries = len(primary_index)
+        Rc = kwargs.get("Rc", self.max_radius)
+
+        if Rc is None:
+            Rc = stars.LagrangianRadii(mf=[0.5], cm=stars.center_of_mass())[0][0]
+
+        Pmax = ((Rc.value_in(units.AU) ** 3) / 2.0 / 0.01) ** 0.5 | units.day
+        Pmin = 1.0 | units.day
+
+        periods = numpy.zeros(nbinaries) | units.day
+        pending = list(range(nbinaries))
+        while len(pending) > 0:
+            logP = numpy.random.normal(
+                loc=numpy.log10(self.mean_period.value_in(units.day)),
+                scale=self.sigma_logP,
+                size=len(pending),
+            )
+            periods[pending] = 10.0 ** logP | units.day
+            pending = list(numpy.where((periods > Pmax) | (periods < Pmin))[0])
+
+        return periods
+
+    def get_eccentricities(self, stars, primary_index, companion_index, **kwargs):
         """
         Sample binary eccentricities according to the configured eccentricity
         population model.
         """
+        nbinaries = len(primary_index)
+
         if self.eccentricities == "thermal":
             return numpy.sqrt(numpy.random.uniform(size=nbinaries))
         if self.eccentricities == "circular":
@@ -299,21 +331,10 @@ class BinaryPopulation:
         single_index = list(single_index)
 
         binary_mass = mass[primary_index] + mass[companion_index]
-        Pmax = ((Rc.value_in(units.AU) ** 3) / 2.0 / 0.01) ** 0.5 | units.day
-        Pmin = 1.0 | units.day
+        ### These functions could be overwriten by an user
+        periods = self.get_periods(stars, primary_index, companion_index, Rc=Rc)
+        ecc = self.get_eccentricities(stars, primary_index, companion_index )
 
-        periods = numpy.zeros(nbinaries) | units.day
-        pending = list(range(nbinaries))
-        while len(pending) > 0:
-            logP = numpy.random.normal(
-                loc=numpy.log10(self.mean_period.value_in(units.day)),
-                scale=self.sigma_logP,
-                size=len(pending),
-            )
-            periods[pending] = 10.0 ** logP | units.day
-            pending = list(numpy.where((periods > Pmax) | (periods < Pmin))[0])
-
-        ecc = self.get_eccentricities(nbinaries)
         semi_major_axes = (
             (periods.value_in(units.yr) ** 2) * binary_mass.value_in(units.MSun)
         ) ** (1.0 / 3.0) | units.AU
