@@ -85,6 +85,35 @@ class PlummerSphere(BackgroundPotential):
         sigma2 = (G * self.mtot) / (6.0 * a) * (1.0 + (r2/a2) )**(-0.5) * self.alpha_vir
         return sigma2.sqrt()
 
+    def is_gas_relevant(self, stars, **kwargs):
+        """
+        Return whether the gas is still dynamically relevant for the current
+        simulation
+
+        The default criterion compares the enclosed stellar mass fraction within
+        the stellar 90% Lagrangian radius against a threshold. If the stars
+        dominate the enclosed mass strongly enough, the gas is considered no
+        longer relevant.
+        """
+        radius_fraction = kwargs.get("radius_fraction", 0.9)
+        relevance_threshold = kwargs.get("relevance_threshold", 0.999)
+
+        if len(stars) == 0:
+            return self.mtot > (0 | self.mtot.unit)
+
+        mf = [float(radius_fraction)]
+        rlag = stars.LagrangianRadii(mf=mf, cm=stars.center_of_mass())[0][0]
+
+        mstar = stars.mass.sum()
+        mgas = self.get_mass_inside_radius(rlag)
+        mtot = mstar + mgas
+
+        if mtot <= (0 | mtot.unit):
+            return False
+
+        stellar_fraction = mstar / mtot
+        return stellar_fraction < relevance_threshold
+
     def evolve_model(self, tend):
         """
         Advance to time `tend` using the two-phase background model:

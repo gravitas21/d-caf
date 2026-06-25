@@ -231,6 +231,21 @@ class BinaryPopulation:
             "Eccentricity population '%s' not implemented" % self.eccentricities
         )
 
+    def get_normalized_angular_momentum(
+        self, stars, primary_index, companion_index, **kwargs
+    ):
+        """
+        Return per-binary normalized angular-momentum directions.
+
+        The default implementation returns ``None``, meaning that orbit-plane
+        orientations are sampled randomly in ``make_binaries()``.
+
+        When provided, the return value must be a NumPy-like array with shape
+        ``(nbinaries, 3)``, one row per binary. Rows with non-finite values or
+        zero norm are ignored and fall back to random orientation.
+        """
+        return None
+
     def select_binaries(self, mass, nbinaries):
         equal_mass = numpy.std(mass.value_in(units.MSun)) == 0.0
 
@@ -346,12 +361,41 @@ class BinaryPopulation:
         omega = numpy.random.uniform(high=2.0 * numpy.pi, size=nbinaries)
         zi = numpy.random.uniform(high=numpy.pi, size=nbinaries)
 
+        lhat = self.get_normalized_angular_momentum(
+            stars, primary_index, companion_index, Rc=Rc
+        )
+        if lhat is not None:
+            lhat = numpy.asarray(lhat, dtype=float)
+            if lhat.shape != (nbinaries, 3):
+                raise ValueError(
+                    f"lhat must have shape ({nbinaries}, 3), got {lhat.shape}."
+                )
+
+            valid = numpy.all(numpy.isfinite(lhat), axis=1)
+            if numpy.any(valid):
+                norms = numpy.linalg.norm(lhat[valid], axis=1)
+                valid_indices = numpy.where(valid)[0]
+                nonzero = norms > 0.0
+                if numpy.any(nonzero):
+                    use = valid_indices[nonzero]
+                    lhat[use] = lhat[use] / norms[nonzero][:, None]
+
+                    lz = numpy.clip(lhat[use, 2], -1.0, 1.0)
+                    zi[use] = numpy.arccos(lz)
+                    omega[use] = numpy.arctan2(lhat[use, 0], -lhat[use, 1])
+
         px1 = numpy.cos(pi_angle) * numpy.cos(omega) - numpy.sin(pi_angle) * numpy.sin(omega) * numpy.cos(zi)
         qx1 = -numpy.sin(pi_angle) * numpy.cos(omega) - numpy.cos(pi_angle) * numpy.sin(omega) * numpy.cos(zi)
         px2 = numpy.cos(pi_angle) * numpy.sin(omega) + numpy.sin(pi_angle) * numpy.cos(omega) * numpy.cos(zi)
         qx2 = -numpy.sin(pi_angle) * numpy.sin(omega) + numpy.cos(pi_angle) * numpy.cos(omega) * numpy.cos(zi)
         px3 = numpy.sin(pi_angle) * numpy.sin(zi)
         qx3 = numpy.cos(pi_angle) * numpy.sin(zi)
+
+        lhat = numpy.column_stack((
+            numpy.sin(omega) * numpy.sin(zi),
+            -numpy.cos(omega) * numpy.sin(zi),
+            numpy.cos(zi),
+        ))
 
         xrel = px1 * separation
         yrel = px2 * separation
@@ -405,6 +449,7 @@ class BinaryPopulation:
                 "periods": periods,
                 "semi_major_axes": semi_major_axes,
                 "eccentricities": ecc,
+                "lhat": lhat,
                 "nbinaries": nbinaries,
             },
             {
