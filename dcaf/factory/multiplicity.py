@@ -111,6 +111,11 @@ class BinaryPopulation:
       leaving `apply(...)` available for manual staged construction.
     - `apply(..., force_n_binaries=...)`: run one pairing pass while
       explicitly overriding the configured binary count for that call only.
+    - `higher_order_mode`: controls how recursive companions are placed. The
+      default `"hierarchical"` uses subsystem centres of mass. The
+      `"primary_centered"` mode keeps the same stored hierarchy arrays but
+      places new companions relative to the primary star of the existing
+      system.
     """
 
     def __init__(
@@ -123,6 +128,7 @@ class BinaryPopulation:
         sigma_logP=2.3,
         eccentricities="circular",
         max_radius=None,
+        higher_order_mode="hierarchical",
     ):
         self.nbinaries = nbinaries
         self.population_fraction = population_fraction
@@ -132,6 +138,7 @@ class BinaryPopulation:
         self.sigma_logP = sigma_logP
         self.eccentricities = eccentricities
         self.max_radius = max_radius
+        self.higher_order_mode = higher_order_mode
 
         if (self.nbinaries is None) == (self.population_fraction is None):
             raise ValueError("Provide exactly one of `nbinaries` or `population_fraction`.")
@@ -152,6 +159,10 @@ class BinaryPopulation:
                     )
         if self.q_min < 0.0 or self.q_min > 1.0:
             raise ValueError("q_min must be between 0 and 1.")
+        if self.higher_order_mode not in ("hierarchical", "primary_centered"):
+            raise ValueError(
+                "higher_order_mode must be 'hierarchical' or 'primary_centered'."
+            )
 
     def get_number_of_binaries(self, stars):
         """
@@ -811,26 +822,143 @@ class BinaryPopulation:
                         primary_resolved = primary_entry["_resolved_particles"].copy()
                         secondary_resolved = secondary_entry["_resolved_particles"].copy()
 
-                        for target, resolved_subset in (
-                            (primary, primary_resolved),
-                            (secondary, secondary_resolved),
-                        ):
-                            old_com = resolved_subset.center_of_mass()
-                            old_com_velocity = resolved_subset.center_of_mass_velocity()
+                        if self.higher_order_mode == "hierarchical":
+                            for target, resolved_subset in (
+                                (primary, primary_resolved),
+                                (secondary, secondary_resolved),
+                            ):
+                                old_com = resolved_subset.center_of_mass()
+                                old_com_velocity = (
+                                    resolved_subset.center_of_mass_velocity()
+                                )
 
-                            dx = resolved_subset.x - old_com.x
-                            dy = resolved_subset.y - old_com.y
-                            dz = resolved_subset.z - old_com.z
-                            dvx = resolved_subset.vx - old_com_velocity.x
-                            dvy = resolved_subset.vy - old_com_velocity.y
-                            dvz = resolved_subset.vz - old_com_velocity.z
+                                dx = resolved_subset.x - old_com.x
+                                dy = resolved_subset.y - old_com.y
+                                dz = resolved_subset.z - old_com.z
+                                dvx = resolved_subset.vx - old_com_velocity.x
+                                dvy = resolved_subset.vy - old_com_velocity.y
+                                dvz = resolved_subset.vz - old_com_velocity.z
 
-                            resolved_subset.x = target.x + dx
-                            resolved_subset.y = target.y + dy
-                            resolved_subset.z = target.z + dz
-                            resolved_subset.vx = target.vx + dvx
-                            resolved_subset.vy = target.vy + dvy
-                            resolved_subset.vz = target.vz + dvz
+                                resolved_subset.x = target.x + dx
+                                resolved_subset.y = target.y + dy
+                                resolved_subset.z = target.z + dz
+                                resolved_subset.vx = target.vx + dvx
+                                resolved_subset.vy = target.vy + dvy
+                                resolved_subset.vz = target.vz + dvz
+                        else:
+                            old_primary_com = primary_resolved.center_of_mass()
+                            old_primary_com_velocity = (
+                                primary_resolved.center_of_mass_velocity()
+                            )
+
+                            primary_anchor = primary_resolved[0]
+                            primary_offset_x = primary_anchor.x - old_primary_com.x
+                            primary_offset_y = primary_anchor.y - old_primary_com.y
+                            primary_offset_z = primary_anchor.z - old_primary_com.z
+                            primary_offset_vx = (
+                                primary_anchor.vx - old_primary_com_velocity.x
+                            )
+                            primary_offset_vy = (
+                                primary_anchor.vy - old_primary_com_velocity.y
+                            )
+                            primary_offset_vz = (
+                                primary_anchor.vz - old_primary_com_velocity.z
+                            )
+
+                            target_com = binary_system.copy()
+                            total_mass = binary_system.mass
+                            companion_mass = secondary_resolved.mass.sum()
+                            primary_mass = primary_resolved.mass.sum()
+
+                            anchor_x = (
+                                target_com.x
+                                + (
+                                    primary_mass * primary_offset_x
+                                    - companion_mass * (secondary.x - primary.x)
+                                )
+                                / total_mass
+                            )
+                            anchor_y = (
+                                target_com.y
+                                + (
+                                    primary_mass * primary_offset_y
+                                    - companion_mass * (secondary.y - primary.y)
+                                )
+                                / total_mass
+                            )
+                            anchor_z = (
+                                target_com.z
+                                + (
+                                    primary_mass * primary_offset_z
+                                    - companion_mass * (secondary.z - primary.z)
+                                )
+                                / total_mass
+                            )
+                            anchor_vx = (
+                                target_com.vx
+                                + (
+                                    primary_mass * primary_offset_vx
+                                    - companion_mass * (secondary.vx - primary.vx)
+                                )
+                                / total_mass
+                            )
+                            anchor_vy = (
+                                target_com.vy
+                                + (
+                                    primary_mass * primary_offset_vy
+                                    - companion_mass * (secondary.vy - primary.vy)
+                                )
+                                / total_mass
+                            )
+                            anchor_vz = (
+                                target_com.vz
+                                + (
+                                    primary_mass * primary_offset_vz
+                                    - companion_mass * (secondary.vz - primary.vz)
+                                )
+                                / total_mass
+                            )
+
+                            dx = primary_resolved.x - primary_anchor.x
+                            dy = primary_resolved.y - primary_anchor.y
+                            dz = primary_resolved.z - primary_anchor.z
+                            dvx = primary_resolved.vx - primary_anchor.vx
+                            dvy = primary_resolved.vy - primary_anchor.vy
+                            dvz = primary_resolved.vz - primary_anchor.vz
+
+                            primary_resolved.x = anchor_x + dx
+                            primary_resolved.y = anchor_y + dy
+                            primary_resolved.z = anchor_z + dz
+                            primary_resolved.vx = anchor_vx + dvx
+                            primary_resolved.vy = anchor_vy + dvy
+                            primary_resolved.vz = anchor_vz + dvz
+
+                            companion_anchor = secondary_resolved[0]
+                            cdx = secondary_resolved.x - companion_anchor.x
+                            cdy = secondary_resolved.y - companion_anchor.y
+                            cdz = secondary_resolved.z - companion_anchor.z
+                            cdvx = secondary_resolved.vx - companion_anchor.vx
+                            cdvy = secondary_resolved.vy - companion_anchor.vy
+                            cdvz = secondary_resolved.vz - companion_anchor.vz
+
+                            secondary_resolved.x = primary_resolved[0].x + (
+                                secondary.x - primary.x
+                            ) + cdx
+                            secondary_resolved.y = primary_resolved[0].y + (
+                                secondary.y - primary.y
+                            ) + cdy
+                            secondary_resolved.z = primary_resolved[0].z + (
+                                secondary.z - primary.z
+                            ) + cdz
+                            secondary_resolved.vx = primary_resolved[0].vx + (
+                                secondary.vx - primary.vx
+                            ) + cdvx
+                            secondary_resolved.vy = primary_resolved[0].vy + (
+                                secondary.vy - primary.vy
+                            ) + cdvy
+                            secondary_resolved.vz = primary_resolved[0].vz + (
+                                secondary.vz - primary.vz
+                            ) + cdvz
 
                     primary_resolved.system_id = system_id
                     secondary_resolved.system_id = system_id
