@@ -92,18 +92,16 @@ The goal here is that any new feature should come with at least one test that wo
 
 ⸻
 
-examples/ — runnable reference scripts
+examples/ — runnable reference scripts.
+
+TODO: Examples are not updated to the latest version.
 
 Minimal scripts demonstrating typical configurations.
 Should be the landing place for new users.
 
 ⸻
 
-scripts/ — lightweight CLI helpers
-
-One-off utilities / entry points:
+scripts/ — general standalone scripts
 	•	analysis scripts
 	•	batch helpers
 	•	convenience runners
-These are script that can be ran on the command line with options.
-Put changes here when the feature is meant to be invoked as a small command-line tool.
