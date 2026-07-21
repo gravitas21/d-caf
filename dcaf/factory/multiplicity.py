@@ -19,6 +19,8 @@ import numpy
 
 from amuse.lab import Particles, units
 from amuse.units.constants import G
+import numpy as np
+from dcaf.factory import field_binary_population as fbp
 
 
 def synchronize_resolved_with_unresolved(unresolved_stars, resolved_stars):
@@ -129,6 +131,7 @@ class BinaryPopulation:
         eccentricities="circular",
         max_radius=None,
         higher_order_mode="hierarchical",
+        companion_mode = 'pool'
     ):
         self.nbinaries = nbinaries
         self.population_fraction = population_fraction
@@ -139,6 +142,10 @@ class BinaryPopulation:
         self.eccentricities = eccentricities
         self.max_radius = max_radius
         self.higher_order_mode = higher_order_mode
+
+        self.companion_mode = companion_mode
+        if self.companion_mode not in ("pool", "create"):
+            raise ValueError("companion_mode must be 'pool' or 'create'.")
 
         if (self.nbinaries is None) == (self.population_fraction is None):
             raise ValueError("Provide exactly one of `nbinaries` or `population_fraction`.")
@@ -186,6 +193,28 @@ class BinaryPopulation:
             raise ValueError("nbinaries can not exceed len(stars)//2.")
 
         return nbinaries
+
+    def preprocess_stars(self, stars):
+        """
+        This function is meant to be overwritten by inherited classes.
+        This function is called inside apply before performing the pairing.
+        It purpose is to give flexibility, in case we need to modify
+        stars that will go into the binary population. 
+
+        One example application:
+        Currently the code pair stars from the pool of existing stars. However,
+        another option is to create the companions inplace based on a given mass
+        ratio. So the preprocess_stars function does:
+        1) for each primary, assign a mass ratio and create the companion
+        2) at each primary, link its companion adding it index as a new property.
+
+        3) then the choose_companion function (rewritten by the user) can read
+        this index and return it so the rest of the class do the rest.
+
+        """
+
+        return stars
+
 
     def choose_companion(self, m1, mass, equal_mass=False):
         """
@@ -403,8 +432,8 @@ class BinaryPopulation:
             stars, primary_index, companion_index, **kwargs
         )
 
-    def select_binaries(self, mass, nbinaries):
-        equal_mass = numpy.std(mass.value_in(units.MSun)) == 0.0
+    def select_binaries(self, stars, nbinaries):
+        equal_mass = numpy.std(stars.mass.value_in(units.MSun)) == 0.0
 
         primary_index = []
         companion_index = []
@@ -524,7 +553,7 @@ class BinaryPopulation:
         else:
             nbinaries = int(force_n_binaries)
         if hierarchy is None:
-            primary_index, companion_index = self.select_binaries(mass, nbinaries)
+            primary_index, companion_index = self.select_binaries(stars, nbinaries)
         else:
             primary_index = []
             companion_index = []
@@ -777,6 +806,11 @@ class BinaryPopulation:
             )
 
         hierarchy_in = hierarchy
+
+        if hierarchy_in is None:
+            stars = self.preprocess_stars(stars)
+
+
         data, internal = self.make_binaries(
             stars,
             hierarchy=hierarchy_in,
@@ -1110,3 +1144,229 @@ class BinaryPopulation:
         data["binary_fraction"] = population_fraction[1]
 
         return data
+
+
+
+class FieldBinaryPopulation(BinaryPopulation):
+    """
+    This class implements Cournoyer-Cloutier et al. (2024), ApJ 977, Issue 2,
+    id. 203 Binary population generation, which aims to reproduce observational
+    statistics obtained by Moe & Di Stefano (2017), Winters et al. (2019) and
+    Offner et al. (2022).
+
+    Notes: 
+    - The apply function here works differently than the standard D-CAF. The
+      provided stars will not be paired between them. Rather, companions will be
+      created for primaries the algorithm decides to become a binary.
+      However, the total mass will be respected (within small variatons caused
+      by sampling) by trimming the excess of stars. This trimming is random, and
+      by system.
+    - This class do not requires binary fraction. The binary fraction is
+      dependent on mass and is decided by the algorithm.
+    """
+
+    def __init__(
+        self,
+        mult_frac='field',
+        pdist='inner',
+        qdist='field',
+        edist='field',
+        min_mass=0.08,
+        **kwargs,
+    ):
+        self.mult_frac = mult_frac
+        self.pdist = pdist
+        self.qdist = qdist
+        self.edist = edist
+        self.min_mass = min_mass
+
+        super().__init__(nbinaries=0,**kwargs)
+
+    def preprocess_stars(self, stars):
+        """
+        On this version of the class. This function assign companions and binary
+        properties to each star. It create the companion stars and append the
+        necessary binary properties. 
+        functions called later will just read what we decide here.
+        """
+        stars = stars.copy()
+
+        if hasattr(stars, "secondary_id"):
+            return stars
+
+        masses = stars.mass.value_in(units.MSun)
+
+        primary_mask, _ = fbp.get_multiplicity(
+            masses,
+            mult_frac=self.mult_frac,
+        )
+        primary_index = np.where(primary_mask)[0]
+        primary_masses = masses[primary_index]
+
+        self.nbinaries = len(primary_index)
+
+        secondary_id = -np.ones(len(stars), dtype=int)
+        is_secondary = np.zeros(len(stars), dtype=bool)
+        binary_period = np.zeros(len(stars)) | units.day
+
+        stars.secondary_id = secondary_id
+        stars.is_secondary = is_secondary
+        stars.binary_period = binary_period
+
+        if len(primary_index) == 0:
+            return stars
+
+        periods = fbp.get_periods(primary_masses, pdist=self.pdist) | units.day
+        q = fbp.get_mass_ratios(
+            primary_masses,
+            periods.value_in(units.day),
+            qdist=self.qdist,
+            mmin=self.min_mass,
+        )
+
+        companion_masses = primary_masses * q
+        secondaries = Particles(len(primary_index))
+        secondaries.mass = companion_masses | units.MSun
+        secondaries.secondary_id = -np.ones(len(secondaries), dtype=int)
+        secondaries.is_secondary = np.ones(len(secondaries), dtype=bool)
+        secondaries.binary_period = np.zeros(len(secondaries)) | units.day
+
+        if hasattr(stars, "radius"):
+            secondaries.radius = stars[primary_index].radius
+        if hasattr(stars, "x"):
+            secondaries.position = stars[primary_index].position
+        if hasattr(stars, "vx"):
+            secondaries.velocity = stars[primary_index].velocity
+
+        n_old = len(stars)
+        stars.add_particles(secondaries)
+
+        companion_index = np.arange(n_old, n_old + len(secondaries))
+        stars.secondary_id[primary_index] = companion_index
+        stars.binary_period[primary_index] = periods
+        stars.is_secondary[companion_index] = True
+
+        return stars
+
+    def preprocess_stars(self, stars):
+
+
+
+        stars = stars.copy()
+
+        if hasattr(stars, "secondary_id"):
+            return stars
+
+        masses = stars.mass.value_in(units.MSun)
+
+        # First we assign who is a binary
+        primary_mask, single_mask = fbp.get_multiplicity(
+            masses,
+            mult_frac=self.mult_frac,
+        )
+
+        primary_index = np.where(primary_mask)[0]
+        primary_masses = masses[primary_index]
+
+        # save the number of binaries for later
+        self.nbinaries = len(primary_index)
+
+        # set up the initial arrays
+        secondary_id = -np.ones(len(stars), dtype=int)
+        is_secondary = np.zeros(len(stars), dtype=bool)
+        binary_period = np.zeros(len(stars)) | units.day
+        binary_eccentricity = np.zeros(len(stars))
+
+        # return if no binaries
+        if len(primary_index) == 0:
+            stars.secondary_id = secondary_id
+            stars.is_secondary = is_secondary
+            stars.binary_period = binary_period
+            stars.binary_eccentricity = binary_eccentricity
+            return stars
+
+        # assign periods. This could be done on the class dedicated function
+        # edit: imported this function into the class. is done internally now
+        periods = self.get_periods(stars, primary_index, None, sample=True )
+        q = fbp.get_mass_ratios(
+            primary_masses,
+            periods.value_in(units.day),
+            qdist=self.qdist,
+            mmin=self.min_mass,
+        )
+
+        # same as above.
+        #eccentricities = get_eccentricities(
+        #    primary_masses,
+        #    periods.value_in(units.day),
+        #    edist=self.edist,
+        #)
+
+        companion_masses = primary_masses * q
+        secondaries = Particles(len(primary_index))
+        secondaries.mass = companion_masses | units.MSun
+
+        # minimal placeholder values; can be improved later if needed
+        if hasattr(stars, "radius"):
+            secondaries.radius = stars[primary_index].radius
+        if hasattr(stars, "x"):
+            secondaries.position = stars[primary_index].position
+        if hasattr(stars, "vx"):
+            secondaries.velocity = stars[primary_index].velocity
+
+        secondaries.is_secondary = np.ones(len(secondaries), dtype=bool)
+        secondaries.secondary_id = -np.ones(len(secondaries), dtype=int)
+        secondaries.binary_period = np.zeros(len(secondaries)) | units.day
+        secondaries.binary_eccentricity = np.zeros(len(secondaries))
+
+        n_old = len(stars)
+        stars.secondary_id = secondary_id
+        stars.is_secondary = is_secondary
+        stars.binary_period = binary_period
+        stars.binary_eccentricity = binary_eccentricity
+
+        stars.add_particles(secondaries)
+
+        # this below may not be needed
+        companion_index = np.arange(n_old, n_old + len(secondaries))
+        stars.secondary_id[primary_index] = companion_index
+        stars.binary_period[primary_index] = periods
+        #stars.binary_eccentricity[primary_index] = eccentricities
+        stars.is_secondary[companion_index] = True
+
+        return stars
+
+
+    def select_binaries(self, stars, nbinaries):
+        """
+        Return the indexes of primaries and secondaries.
+        On this FieldBinaryPopulation class, that was decided in the
+        preproecess_stars function. Here we just hand it over.
+        """
+        primary_index = np.where(stars.secondary_id >= 0)[0].tolist()
+        companion_index = stars.secondary_id[primary_index].astype(int).tolist()
+
+        # a sanity check
+        if len(primary_index) != nbinaries:
+            raise ValueError(
+                f"Prepared {len(primary_index)} binaries but DCAF requested {nbinaries}."
+            )
+
+        return primary_index, companion_index
+
+    def get_periods(self, stars, primary_index, companion_index,sample=False, **kwargs):
+            pdist = self.pdist
+            m = stars.mass[primary_index].value_in(units.MSun)
+            if not sample : 
+                return stars[primary_index].binary_period 
+
+            p = fbp.get_periods(m,pdist=self.pdist) | units.day
+            return p
+
+    def get_eccentricities(self, stars, primary_index, companion_index, **kwargs):
+        m = stars.mass[primary_index].value_in(units.MSun)
+        p = stars.binary_period[primary_index].value_in(units.day)
+
+        ecc = fbp.get_eccentricities(m,p, edist = self.edist )
+
+        return ecc
