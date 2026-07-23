@@ -1190,6 +1190,7 @@ class FieldBinaryPopulation(BinaryPopulation):
         functions called later will just read what we decide here.
         """
         stars = stars.copy()
+        target_mass = stars.mass.sum()
 
         if hasattr(stars, "secondary_id"):
             return stars
@@ -1245,6 +1246,60 @@ class FieldBinaryPopulation(BinaryPopulation):
         stars.secondary_id[primary_index] = companion_index
         stars.binary_period[primary_index] = periods
         stars.is_secondary[companion_index] = True
+
+        # Trim the excess of systems so that we have the desired total mass
+
+        if stars.mass.sum() > target_mass:
+            systems = []
+            cumulative_mass = 0 | target_mass.unit
+
+            # Reconstruct ordered systems from the resolved star list.
+            for i in range(len(stars)):
+                if stars.is_secondary[i]:
+                    continue
+
+                j = int(stars.secondary_id[i])
+                members = [i] if j < 0 else [i, j]
+                system_mass = stars[members].mass.sum()
+
+                if cumulative_mass + system_mass > target_mass:
+                    break
+
+                systems.append(members)
+                cumulative_mass += system_mass
+
+            if len(systems) == 0:
+                raise ValueError(
+                    "The first system already exceeds the target mass budget; "
+                    "cannot trim with a <= whole-system rule."
+                )
+
+            kept_indices = [idx for members in systems for idx in members]
+            trimmed = stars[kept_indices].copy()
+
+            # Rebuild binary bookkeeping because particle indices changed.
+            old_to_new = {old: new for new, old in enumerate(kept_indices)}
+            secondary_id = -np.ones(len(trimmed), dtype=int)
+            is_secondary = np.zeros(len(trimmed), dtype=bool)
+            binary_period = np.zeros(len(trimmed)) | units.day
+
+            for members in systems:
+                if len(members) == 2:
+                    old_primary, old_secondary = members
+                    new_primary = old_to_new[old_primary]
+                    new_secondary = old_to_new[old_secondary]
+
+                    secondary_id[new_primary] = new_secondary
+                    is_secondary[new_secondary] = True
+                    binary_period[new_primary] = stars.binary_period[old_primary]
+
+            trimmed.secondary_id = secondary_id
+            trimmed.is_secondary = is_secondary
+            trimmed.binary_period = binary_period
+
+            stars = trimmed
+
+        self.nbinaries = int(np.sum(stars.secondary_id >= 0))
 
         return stars
 

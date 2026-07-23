@@ -1,2 +1,2 @@
 from . import multiplicity
-from .multiplicity import BinaryPopulation
+from .multiplicity import *
