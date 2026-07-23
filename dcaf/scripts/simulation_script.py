@@ -398,7 +398,6 @@ def parse_args():
         "dt_out",
         "dt_level",
         "stars_per_worker",
-        "field_binaries",
     )
 
     if a.resume:
@@ -428,6 +427,7 @@ def parse_args():
 
     if a.test_background: params["test_background"] = True
     if a.track_background_gas_energy: params["track_background_gas_energy"] = True
+    if a.field_binaries: params["field_binaries"] = True
     if a.dry_run: params["dry_run"] = True
 
     return params
