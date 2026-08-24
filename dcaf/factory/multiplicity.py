@@ -434,6 +434,7 @@ class BinaryPopulation:
 
     def select_binaries(self, stars, nbinaries):
         equal_mass = numpy.std(stars.mass.value_in(units.MSun)) == 0.0
+        mass = stars.mass 
 
         primary_index = []
         companion_index = []
