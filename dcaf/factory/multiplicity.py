@@ -343,6 +343,48 @@ class BinaryPopulation:
                 return index
         return None
 
+    def select_higher_order_pairs(
+        self, stars, hierarchy, available_indexes, npairs, **kwargs
+    ):
+        """
+        Select higher-order system pairs for one recursive pairing pass.
+
+        Subclasses can override this batch hook when companion choices need to
+        be coordinated across systems. The default preserves the sequential
+        ``select_higher_order_companion`` behavior.
+        """
+        primary_index = []
+        companion_index = []
+        available_indexes = list(available_indexes)
+
+        while len(primary_index) < npairs:
+            multiple_indexes = [
+                i
+                for i in available_indexes
+                if len(hierarchy[i]["members"]) > 1
+            ]
+            if len(multiple_indexes) == 0:
+                raise ValueError(
+                    f"Could only construct {len(primary_index)} of "
+                    f"{npairs} requested higher-order systems: no "
+                    "eligible multiple systems remain."
+                )
+
+            index = int(numpy.random.choice(multiple_indexes))
+            index2 = self.select_higher_order_companion(
+                index, stars, hierarchy, available_indexes, **kwargs
+            )
+            if index2 is None:
+                available_indexes.remove(index)
+                continue
+
+            primary_index.append(index)
+            companion_index.append(index2)
+            available_indexes.remove(index)
+            available_indexes.remove(index2)
+
+        return primary_index, companion_index
+
     def get_higher_order_periods(
         self,
         stars,
@@ -418,6 +460,23 @@ class BinaryPopulation:
         return self.get_eccentricities(
             stars, primary_index, companion_index, **kwargs
         )
+
+    def get_higher_order_orbital_parameters(
+        self, stars, primary_index, companion_index, hierarchy, **kwargs
+    ):
+        """
+        Sample periods and eccentricities for higher-order orbits.
+
+        The default delegates to the two independent sampling hooks. Subclasses
+        can override this joint hook when acceptance depends on both parameters.
+        """
+        periods = self.get_higher_order_periods(
+            stars, primary_index, companion_index, hierarchy, **kwargs
+        )
+        eccentricities = self.get_higher_order_eccentricities(
+            stars, primary_index, companion_index, hierarchy, **kwargs
+        )
+        return periods, eccentricities
 
     def get_higher_order_normalized_angular_momentum(
         self, stars, primary_index, companion_index, hierarchy, **kwargs
@@ -556,30 +615,12 @@ class BinaryPopulation:
         if hierarchy is None:
             primary_index, companion_index = self.select_binaries(stars, nbinaries)
         else:
-            primary_index = []
-            companion_index = []
-            available_indexes = list(range(len(stars)))
-
-            for _ in range(nbinaries):
-                multiple_indexes = [
-                    i for i in available_indexes
-                    if len(hierarchy[i]["members"]) > 1
-                ]
-                if len(multiple_indexes) == 0:
-                    break
-
-                index = numpy.random.choice(multiple_indexes)
-                index2 = self.select_higher_order_companion(
-                    index, stars, hierarchy, available_indexes
-                )
-                if index2 is None:
-                    available_indexes.remove(index)
-                    continue
-
-                primary_index.append(index)
-                companion_index.append(index2)
-                available_indexes.remove(index)
-                available_indexes.remove(index2)
+            primary_index, companion_index = self.select_higher_order_pairs(
+                stars,
+                hierarchy,
+                list(range(len(stars))),
+                nbinaries,
+            )
 
         binary_index = list(primary_index)
         used = set(primary_index) | set(companion_index)
@@ -640,10 +681,7 @@ class BinaryPopulation:
                 stars, primary_index, companion_index, Rc=Rc
             )
         else:
-            periods = self.get_higher_order_periods(
-                stars, primary_index, companion_index, hierarchy, Rc=Rc
-            )
-            ecc = self.get_higher_order_eccentricities(
+            periods, ecc = self.get_higher_order_orbital_parameters(
                 stars, primary_index, companion_index, hierarchy, Rc=Rc
             )
             lhat = self.get_higher_order_normalized_angular_momentum(
